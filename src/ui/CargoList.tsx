@@ -1,4 +1,6 @@
 import { useAppStore } from '../state/store'
+import { getVoxelGrid } from '../core/voxelGridSingleton'
+import type { Vec3 } from '../core/types'
 import styles from './CargoList.module.css'
 
 export function CargoList() {
@@ -11,8 +13,8 @@ export function CargoList() {
     const def = state.cargoDefs.find((d) => d.id === defId)
     if (!def) return
 
-    // Auto-placement: find first available position
-    const position = findPlacementPosition(def.widthCm, def.heightCm, def.depthCm, state)
+    // Auto-placement: find first available position using VoxelGrid
+    const position = findPlacementPosition(def.widthCm, def.heightCm, def.depthCm, state.container)
     if (position) {
       placeCargo(defId, position)
     } else {
@@ -29,6 +31,20 @@ export function CargoList() {
     removeCargoDef(defId)
   }
 
+  const handleDragStart = (e: React.DragEvent, defId: string) => {
+    e.dataTransfer.setData('text/plain', defId)
+    e.dataTransfer.effectAllowed = 'copy'
+    useAppStore.getState().setDragState({
+      cargoDefId: defId,
+      currentPosition: null,
+      isValid: false,
+    })
+  }
+
+  const handleDragEnd = () => {
+    useAppStore.getState().setDragState(null)
+  }
+
   if (cargoDefs.length === 0) {
     return (
       <div className={styles.empty}>
@@ -40,7 +56,13 @@ export function CargoList() {
   return (
     <div className={styles.list}>
       {cargoDefs.map((def) => (
-        <div key={def.id} className={styles.item}>
+        <div
+          key={def.id}
+          className={styles.item}
+          draggable
+          onDragStart={(e) => handleDragStart(e, def.id)}
+          onDragEnd={handleDragEnd}
+        >
           <div className={styles.itemHeader}>
             <span
               className={styles.colorSwatch}
@@ -74,54 +96,45 @@ export function CargoList() {
   )
 }
 
-// Simple auto-placement: scan X→Z→Y for first non-colliding position
+// Auto-placement using VoxelGrid for precise collision detection
 function findPlacementPosition(
   w: number, h: number, d: number,
-  state: { container: { widthCm: number; heightCm: number; depthCm: number }; placements: { positionCm: { x: number; y: number; z: number }; cargoDefId: string }[]; cargoDefs: { id: string; widthCm: number; heightCm: number; depthCm: number }[] },
-): { x: number; y: number; z: number } | null {
-  const cw = state.container.widthCm
-  const ch = state.container.heightCm
-  const cd = state.container.depthCm
+  container: { widthCm: number; heightCm: number; depthCm: number },
+): Vec3 | null {
+  const cw = container.widthCm
+  const ch = container.heightCm
+  const cd = container.depthCm
+  const grid = getVoxelGrid()
 
-  // Build simple occupied grid from existing placements
-  const occupied: { x: number; y: number; z: number; w: number; h: number; d: number }[] = []
-  for (const p of state.placements) {
-    const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
-    if (def) {
-      occupied.push({
-        x: p.positionCm.x, y: p.positionCm.y, z: p.positionCm.z,
-        w: def.widthCm, h: def.heightCm, d: def.depthCm,
-      })
-    }
-  }
-
-  const step = 10 // 10cm step for search
+  const step = 1 // 1cm precision with VoxelGrid
 
   for (let y = 0; y + h <= ch; y += step) {
     for (let z = 0; z + d <= cd; z += step) {
       for (let x = 0; x + w <= cw; x += step) {
-        if (!hasBoxCollision(x, y, z, w, h, d, occupied)) {
+        // Quick check: test corner voxels first for fast rejection
+        if (grid.get(x, y, z) !== 0) continue
+        if (grid.get(x + w - 1, y, z) !== 0) continue
+        if (grid.get(x, y + h - 1, z) !== 0) continue
+        if (grid.get(x, y, z + d - 1) !== 0) continue
+
+        // Full check using hasCollision
+        const voxels: Vec3[] = []
+        let collision = false
+        for (let vz = z; vz < z + d && !collision; vz++) {
+          for (let vy = y; vy < y + h && !collision; vy++) {
+            for (let vx = x; vx < x + w && !collision; vx++) {
+              if (grid.get(vx, vy, vz) !== 0) {
+                collision = true
+              }
+              voxels.push({ x: vx, y: vy, z: vz })
+            }
+          }
+        }
+        if (!collision) {
           return { x, y, z }
         }
       }
     }
   }
   return null
-}
-
-function hasBoxCollision(
-  x: number, y: number, z: number,
-  w: number, h: number, d: number,
-  occupied: { x: number; y: number; z: number; w: number; h: number; d: number }[],
-): boolean {
-  for (const o of occupied) {
-    if (
-      x < o.x + o.w && x + w > o.x &&
-      y < o.y + o.h && y + h > o.y &&
-      z < o.z + o.d && z + d > o.z
-    ) {
-      return true
-    }
-  }
-  return false
 }

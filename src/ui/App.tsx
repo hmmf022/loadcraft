@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import { Sidebar } from './Sidebar'
 import { CanvasPanel } from './CanvasPanel'
+import { ErrorBoundary } from './ErrorBoundary'
+import { WebGPUFallback } from './WebGPUFallback'
 import { useAppStore } from '../state/store'
 import styles from './App.module.css'
 
@@ -14,11 +16,19 @@ export function App() {
       } else if (e.ctrlKey && e.key === 'y') {
         e.preventDefault()
         useAppStore.getState().redo()
-      } else if (e.key === 'Delete') {
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Avoid intercepting text input
+        const target = e.target as HTMLElement
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+
         const selected = useAppStore.getState().selectedInstanceId
         if (selected !== null) {
+          e.preventDefault()
           useAppStore.getState().removePlacement(selected)
         }
+      } else if (e.key === 'Escape') {
+        useAppStore.getState().setSelectedInstanceId(null)
+        useAppStore.getState().setDragState(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -29,7 +39,9 @@ export function App() {
     <div className={styles.appLayout}>
       <Sidebar />
       <div className={styles.canvasArea}>
-        <CanvasPanel />
+        <ErrorBoundary fallback={<WebGPUFallback />}>
+          <CanvasPanel />
+        </ErrorBoundary>
       </div>
     </div>
   )

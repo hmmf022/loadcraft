@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3 } from '../core/types'
+import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState } from '../core/types'
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
-import { HistoryManager, PlaceCommand, RemoveCommand } from '../core/History'
+import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand } from '../core/History'
 
 const defaultContainer = CONTAINER_PRESETS[0]!
 const historyManager = new HistoryManager(100)
@@ -16,16 +16,22 @@ export interface AppState {
   cargoDefs: CargoItemDef[]
   addCargoDef: (def: CargoItemDef) => void
   removeCargoDef: (id: string) => void
+  updateCargoDef: (id: string, updates: Partial<Omit<CargoItemDef, 'id'>>) => void
 
   // Placements
   placements: PlacedCargo[]
   nextInstanceId: number
   placeCargo: (cargoDefId: string, position: Vec3) => void
   removePlacement: (instanceId: number) => void
+  moveCargo: (instanceId: number, newPosition: Vec3) => void
 
   // Selection
   selectedInstanceId: number | null
   setSelectedInstanceId: (id: number | null) => void
+
+  // Drag state
+  dragState: DragState | null
+  setDragState: (state: DragState | null) => void
 
   // Render version (triggers renderer updates)
   renderVersion: number
@@ -54,6 +60,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       placements: [],
       nextInstanceId: 1,
       selectedInstanceId: null,
+      dragState: null,
       canUndo: false,
       canRedo: false,
       renderVersion: state.renderVersion + 1,
@@ -79,6 +86,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       renderVersion: state.renderVersion + 1,
     })
   },
+  updateCargoDef: (id, updates) => {
+    set((state) => ({
+      cargoDefs: state.cargoDefs.map((d) =>
+        d.id === id ? { ...d, ...updates } : d,
+      ),
+      renderVersion: state.renderVersion + 1,
+    }))
+  },
 
   // Placements
   placements: [],
@@ -99,12 +114,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const grid = getVoxelGrid()
 
-    // Check collision
+    // Check bounds
     if (x1 >= grid.width || y1 >= grid.height || z1 >= grid.depth) return
-
-    // Execute via history
-    const cmd = new PlaceCommand(instanceId, x0, y0, z0, x1, y1, z1, def.name)
-    historyManager.executeCommand(cmd, grid)
 
     const newPlacement: PlacedCargo = {
       instanceId,
@@ -112,6 +123,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       positionCm: { x: x0, y: y0, z: z0 },
       rotationDeg: { x: 0, y: 0, z: 0 },
     }
+
+    // Execute via history
+    const cmd = new PlaceCommand(instanceId, x0, y0, z0, x1, y1, z1, def.name, newPlacement)
+    historyManager.executeCommand(cmd, grid)
 
     set({
       placements: [...state.placements, newPlacement],
@@ -137,6 +152,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         instanceId, x0, y0, z0,
         x0 + def.widthCm - 1, y0 + def.heightCm - 1, z0 + def.depthCm - 1,
         def.name,
+        placement,
       )
       historyManager.executeCommand(cmd, grid)
     } else {
@@ -151,10 +167,60 @@ export const useAppStore = create<AppState>((set, get) => ({
       renderVersion: state.renderVersion + 1,
     })
   },
+  moveCargo: (instanceId, newPosition) => {
+    const state = get()
+    const placement = state.placements.find((p) => p.instanceId === instanceId)
+    if (!placement) return
+
+    const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
+    if (!def) return
+
+    const grid = getVoxelGrid()
+    const oldX0 = Math.round(placement.positionCm.x)
+    const oldY0 = Math.round(placement.positionCm.y)
+    const oldZ0 = Math.round(placement.positionCm.z)
+    const newX0 = Math.round(newPosition.x)
+    const newY0 = Math.round(newPosition.y)
+    const newZ0 = Math.round(newPosition.z)
+    const w = def.widthCm - 1
+    const h = def.heightCm - 1
+    const d = def.depthCm - 1
+
+    // Check bounds
+    if (newX0 + w >= grid.width || newY0 + h >= grid.height || newZ0 + d >= grid.depth) return
+    if (newX0 < 0 || newY0 < 0 || newZ0 < 0) return
+
+    const updatedPlacement: PlacedCargo = {
+      ...placement,
+      positionCm: { x: newX0, y: newY0, z: newZ0 },
+    }
+
+    const cmd = new MoveCommand(
+      instanceId,
+      oldX0, oldY0, oldZ0, oldX0 + w, oldY0 + h, oldZ0 + d,
+      newX0, newY0, newZ0, newX0 + w, newY0 + h, newZ0 + d,
+      def.name,
+      updatedPlacement,
+    )
+    historyManager.executeCommand(cmd, grid)
+
+    set({
+      placements: state.placements.map((p) =>
+        p.instanceId === instanceId ? updatedPlacement : p,
+      ),
+      canUndo: historyManager.canUndo,
+      canRedo: historyManager.canRedo,
+      renderVersion: state.renderVersion + 1,
+    })
+  },
 
   // Selection
   selectedInstanceId: null,
   setSelectedInstanceId: (id) => set({ selectedInstanceId: id }),
+
+  // Drag state
+  dragState: null,
+  setDragState: (dragState) => set({ dragState }),
 
   // Render version
   renderVersion: 0,
@@ -164,55 +230,76 @@ export const useAppStore = create<AppState>((set, get) => ({
   canRedo: false,
   undo: () => {
     const grid = getVoxelGrid()
-    const undone = historyManager.undo(grid)
-    if (!undone) return
+    const command = historyManager.undo(grid)
+    if (!command) return
 
-    // Rebuild placements from grid state
-    // For undo of PlaceCommand: remove the last placement
-    // For undo of RemoveCommand: restore the placement
-    // Simplified: rebuild from history would be complex, just re-derive
     const state = get()
 
-    // Re-scan all placement instanceIds in grid to determine which still exist
-    const validPlacements = state.placements.filter((p) => {
-      const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
-      if (!def) return false
-      const x = Math.round(p.positionCm.x)
-      const y = Math.round(p.positionCm.y)
-      return grid.get(x, y, Math.round(p.positionCm.z)) === p.instanceId
-    })
-
-    set({
-      placements: validPlacements,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
+    if (command instanceof PlaceCommand) {
+      // Undo place → remove the placement
+      set({
+        placements: state.placements.filter((p) => p.instanceId !== command.instanceId),
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    } else if (command instanceof RemoveCommand) {
+      // Undo remove → restore the placement
+      set({
+        placements: [...state.placements, command.placement],
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    } else if (command instanceof MoveCommand) {
+      // Undo move → restore old position
+      const oldPlacement: PlacedCargo = {
+        ...command.placement,
+        positionCm: { x: command.oldX0, y: command.oldY0, z: command.oldZ0 },
+      }
+      set({
+        placements: state.placements.map((p) =>
+          p.instanceId === command.instanceId ? oldPlacement : p,
+        ),
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    }
   },
   redo: () => {
     const grid = getVoxelGrid()
-    const redone = historyManager.redo(grid)
-    if (!redone) return
+    const command = historyManager.redo(grid)
+    if (!command) return
 
     const state = get()
-    // After redo, we need to check which placements exist
-    // For now, rebuild similarly
-    const allPlacements = state.placements
-    const validPlacements = allPlacements.filter((p) => {
-      return grid.get(
-        Math.round(p.positionCm.x),
-        Math.round(p.positionCm.y),
-        Math.round(p.positionCm.z),
-      ) === p.instanceId
-    })
 
-    // Check if redo re-added a placement (PlaceCommand.execute)
-    // We need the full placement list from history - simplified version
-    set({
-      placements: validPlacements,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
+    if (command instanceof PlaceCommand) {
+      // Redo place → add the placement back
+      set({
+        placements: [...state.placements, command.placement],
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    } else if (command instanceof RemoveCommand) {
+      // Redo remove → remove the placement
+      set({
+        placements: state.placements.filter((p) => p.instanceId !== command.instanceId),
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    } else if (command instanceof MoveCommand) {
+      // Redo move → apply new position
+      set({
+        placements: state.placements.map((p) =>
+          p.instanceId === command.instanceId ? command.placement : p,
+        ),
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    }
   },
 }))

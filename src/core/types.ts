@@ -56,6 +56,12 @@ export interface GridStats {
   fillRate: number
 }
 
+export interface DragState {
+  cargoDefId: string
+  currentPosition: Vec3 | null
+  isValid: boolean
+}
+
 export const CONTAINER_PRESETS: ContainerPreset[] = [
   { name: '20ft Standard', widthCm: 590, heightCm: 239, depthCm: 235, maxPayloadKg: 28200 },
   { name: '40ft Standard', widthCm: 1203, heightCm: 239, depthCm: 235, maxPayloadKg: 26680 },

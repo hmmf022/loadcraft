@@ -1,10 +1,10 @@
 import { OrbitCamera, CAMERA_UNIFORM_SIZE } from './Camera'
 import { CameraController } from './CameraController'
-import { createCargoPipeline, INSTANCE_BYTE_SIZE } from './pipelines/CargoPipeline'
+import { createCargoPipeline, createGhostPipeline, INSTANCE_BYTE_SIZE } from './pipelines/CargoPipeline'
 import { createContainerPipelines } from './pipelines/ContainerPipeline'
 import { createGridPipeline } from './pipelines/GridPipeline'
 import { mat4Translation, mat4Scaling, mat4Multiply, mat4Identity } from '../utils/math'
-import type { PlacedCargo, CargoItemDef } from '../core/types'
+import type { PlacedCargo, CargoItemDef, Vec3 } from '../core/types'
 
 function hexToRGBA(hex: string): [number, number, number, number] {
   const r = parseInt(hex.slice(1, 3), 16) / 255
@@ -21,7 +21,7 @@ export class Renderer {
   private depthTexture!: GPUTexture
 
   camera: OrbitCamera
-  private cameraController!: CameraController
+  cameraController!: CameraController
 
   // Buffers
   private cameraUniformBuffer!: GPUBuffer
@@ -37,6 +37,12 @@ export class Renderer {
   private instanceBindGroup: GPUBindGroup | null = null
   private instanceBindGroupLayout!: GPUBindGroupLayout
   private instanceCount = 0
+
+  // Ghost pipeline
+  private ghostPipeline!: GPURenderPipeline
+  private ghostBuffer: GPUBuffer | null = null
+  private ghostBindGroup: GPUBindGroup | null = null
+  private ghostVisible = false
 
   // Container pipeline
   private containerTransparentPipeline!: GPURenderPipeline
@@ -57,6 +63,9 @@ export class Renderer {
 
   private animationId = 0
   private disposed = false
+
+  // Selection
+  selectedInstanceId: number | null = null
 
   constructor() {
     this.camera = new OrbitCamera()
@@ -127,6 +136,10 @@ export class Renderer {
     this.cargoIndexBuffer = cargo.indexBuffer
     this.cargoIndexCount = cargo.indexCount
     this.instanceBindGroupLayout = cargo.instanceBindGroupLayout
+
+    // Ghost pipeline (alpha blending, no depth write)
+    const ghost = createGhostPipeline(this.device, this.format, this.cameraBindGroupLayout, cargo.instanceBindGroupLayout)
+    this.ghostPipeline = ghost.pipeline
 
     // Container pipeline (default 20ft: 590 x 239 x 235)
     const container = createContainerPipelines(
@@ -215,11 +228,12 @@ export class Renderer {
       const offset = i * 20
       data.set(modelMatrix, offset)
 
-      const [r, g, b, a] = hexToRGBA(def.color)
+      const [r, g, b] = hexToRGBA(def.color)
       data[offset + 16] = r
       data[offset + 17] = g
       data[offset + 18] = b
-      data[offset + 19] = a
+      // Use alpha > 1.5 to signal selected state to the shader
+      data[offset + 19] = p.instanceId === this.selectedInstanceId ? 2.0 : 1.0
     }
 
     // Recreate buffer if size changed
@@ -235,6 +249,45 @@ export class Renderer {
     this.instanceBindGroup = this.device.createBindGroup({
       layout: this.instanceBindGroupLayout,
       entries: [{ binding: 0, resource: { buffer: this.instanceBuffer } }],
+    })
+  }
+
+  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, isValid: boolean): void {
+    if (!position) {
+      this.ghostVisible = false
+      return
+    }
+
+    this.ghostVisible = true
+    const data = new Float32Array(20)
+
+    const translation = mat4Translation(
+      position.x + widthCm / 2,
+      position.y + heightCm / 2,
+      position.z + depthCm / 2,
+    )
+    const scale = mat4Scaling(widthCm, heightCm, depthCm)
+    const modelMatrix = mat4Multiply(translation, scale)
+    data.set(modelMatrix, 0)
+
+    if (isValid) {
+      data[16] = 0.3; data[17] = 0.8; data[18] = 0.3; data[19] = 0.4 // green, semi-transparent
+    } else {
+      data[16] = 0.9; data[17] = 0.2; data[18] = 0.2; data[19] = 0.4 // red, semi-transparent
+    }
+
+    if (this.ghostBuffer) {
+      this.ghostBuffer.destroy()
+    }
+    this.ghostBuffer = this.device.createBuffer({
+      size: data.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    this.device.queue.writeBuffer(this.ghostBuffer, 0, data)
+
+    this.ghostBindGroup = this.device.createBindGroup({
+      layout: this.instanceBindGroupLayout,
+      entries: [{ binding: 0, resource: { buffer: this.ghostBuffer } }],
     })
   }
 
@@ -310,6 +363,29 @@ export class Renderer {
     }
     pass1.end()
 
+    // Pass 1.5: Ghost (transparent, no depth write)
+    if (this.ghostVisible && this.ghostBindGroup) {
+      const ghostPass = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view: textureView,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+        depthStencilAttachment: {
+          view: depthView,
+          depthLoadOp: 'load',
+          depthStoreOp: 'store',
+        },
+      })
+      ghostPass.setPipeline(this.ghostPipeline)
+      ghostPass.setBindGroup(0, this.cameraBindGroup)
+      ghostPass.setBindGroup(1, this.ghostBindGroup)
+      ghostPass.setVertexBuffer(0, this.cargoVertexBuffer)
+      ghostPass.setIndexBuffer(this.cargoIndexBuffer, 'uint16')
+      ghostPass.drawIndexed(this.cargoIndexCount, 1)
+      ghostPass.end()
+    }
+
     // Pass 2: Container walls
     const pass2 = commandEncoder.beginRenderPass({
       colorAttachments: [{
@@ -378,6 +454,7 @@ export class Renderer {
     this.cargoVertexBuffer?.destroy()
     this.cargoIndexBuffer?.destroy()
     this.instanceBuffer?.destroy()
+    this.ghostBuffer?.destroy()
     this.containerVertexBuffer?.destroy()
     this.containerIndexBuffer?.destroy()
     this.containerUniformBuffer?.destroy()

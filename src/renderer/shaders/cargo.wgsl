@@ -50,6 +50,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
   let NdotL = max(dot(normalize(input.worldNormal), lightDir), 0.0);
   let ambient = 0.3;
   let diffuse = NdotL * 0.7;
-  let finalColor = input.color.rgb * (ambient + diffuse);
+
+  var baseColor = input.color.rgb;
+
+  // Selection highlight: alpha > 1.5 signals selected state
+  if (input.color.a > 1.5) {
+    baseColor = min(baseColor * 1.3, vec3f(1.0));
+    let finalColor = baseColor * (ambient + diffuse);
+    // Add a bright rim effect
+    let viewDir = normalize(camera.cameraPos - input.worldPos);
+    let rim = 1.0 - max(dot(normalize(input.worldNormal), viewDir), 0.0);
+    let rimColor = vec3f(0.4, 0.7, 1.0) * pow(rim, 2.0) * 0.5;
+    return vec4f(finalColor + rimColor, 1.0);
+  }
+
+  let finalColor = baseColor * (ambient + diffuse);
   return vec4f(finalColor, input.color.a);
 }

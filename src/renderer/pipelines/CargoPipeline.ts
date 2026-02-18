@@ -60,7 +60,7 @@ export function createCargoPipeline(
   const instanceBindGroupLayout = device.createBindGroupLayout({
     entries: [{
       binding: 0,
-      visibility: GPUShaderStage.VERTEX,
+      visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
       buffer: { type: 'read-only-storage' },
     }],
   })
@@ -121,4 +121,63 @@ export function createCargoPipeline(
     indexCount: indices.length,
     instanceBindGroupLayout,
   }
+}
+
+/** Ghost pipeline: same shader but with alpha blending and no depth write */
+export function createGhostPipeline(
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  cameraBindGroupLayout: GPUBindGroupLayout,
+  instanceBindGroupLayout: GPUBindGroupLayout,
+) {
+  const pipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [cameraBindGroupLayout, instanceBindGroupLayout],
+  })
+
+  const shaderModule = device.createShaderModule({ code: cargoShader })
+
+  const pipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: {
+      module: shaderModule,
+      entryPoint: 'vs_main',
+      buffers: [{
+        arrayStride: 24,
+        attributes: [
+          { shaderLocation: 0, offset: 0, format: 'float32x3' },
+          { shaderLocation: 1, offset: 12, format: 'float32x3' },
+        ],
+      }],
+    },
+    fragment: {
+      module: shaderModule,
+      entryPoint: 'fs_main',
+      targets: [{
+        format,
+        blend: {
+          color: {
+            srcFactor: 'src-alpha',
+            dstFactor: 'one-minus-src-alpha',
+            operation: 'add',
+          },
+          alpha: {
+            srcFactor: 'one',
+            dstFactor: 'one-minus-src-alpha',
+            operation: 'add',
+          },
+        },
+      }],
+    },
+    primitive: {
+      topology: 'triangle-list',
+      cullMode: 'back',
+    },
+    depthStencil: {
+      format: 'depth24plus',
+      depthWriteEnabled: false, // Don't write to depth buffer
+      depthCompare: 'less',
+    },
+  })
+
+  return { pipeline }
 }
