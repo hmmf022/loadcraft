@@ -1,0 +1,15 @@
+.appLayout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: 1fr;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.canvasArea {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
