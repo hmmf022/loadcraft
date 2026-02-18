@@ -56,22 +56,21 @@ UI action → Zustand store → VoxelGrid (collision) + History (undo)
 
 ## 実装状況と設計書との差分
 
-Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述しているため、現時点の実装との差分を以下に記録する。
+Phase 1-2-3 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述しているため、現時点の実装との差分を以下に記録する。
 
 ### 既知の制限事項（次Phase以降で修正必要）
 
-**undo/redo (`src/state/store.ts` undo/redo アクション)**:
-- ~~redo バグ: 修正済み。PlaceCommand/RemoveCommand/MoveCommand に placement 情報を保持し、redo 時に placements を正しく復元するようになった~~
-
 **auto-placement (`src/ui/CargoList.tsx` findPlacementPosition)**:
-- サイドバーの「配置」ボタン経由の自動配置は VoxelGrid の hasCollision ではなく AABB ボックス同士の比較で簡易実装
-- 10cm ステップで探索するため、隙間なく詰める精度ではない
-- 修正方針: VoxelGrid.hasCollision を使った正確な衝突判定に置き換える
-- ※ D&D 経由の配置は `snapPosition` で VoxelGrid を正しく走査済み
+- サイドバーの「配置」ボタン経由の自動配置は回転未対応（常に rotationDeg={0,0,0} で配置）
+- 1cm ステップで探索するが、回転荷物の自動配置は未実装
+- ※ D&D 経由の配置は `snapPosition` で回転対応済み
 
 **Container 壁メッシュ (`src/renderer/pipelines/ContainerPipeline.ts`)**:
 - 設計書では壁厚付き box (inner/outer faces) だが、現在は単純な 5 面ボックス（前面開口、壁厚なし）
 - 視覚的には問題ないが、内側から見たときの見え方が設計書と異なる
+
+**カメラプリセット切替**:
+- Phase 3 では即座切替。アニメーション付き遷移は Phase 5 の `ViewTransition` で対応予定
 
 ### Store: 未実装のアクション/プロパティ
 
@@ -79,30 +78,29 @@ Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述し
 
 | 項目 | 対応Phase | 備考 |
 |------|----------|------|
-| `rotateCargo` | Phase 3 | 任意回転に必要 |
-| `cameraView` / `setCameraView` | Phase 3 | カメラプリセット切替 |
-| `showGrid` / `toggleGrid` | Phase 3 | グリッド表示ON/OFF |
-| `snapToGrid` / `toggleSnap` | Phase 3 | スナップ機能 |
 | `saveState` / `loadState` | Phase 4 | JSON ファイル入出力 |
 | `weightResult` | Phase 4 | 重量・重心の計算結果 |
 | `importCargoDefs` | Phase 4 | CSV/JSON インポート |
 
 実装済み (Phase 2): ~~`moveCargo`~~, ~~`dragState`/`setDragState`~~, ~~`selectedInstanceId`/`setSelectedInstanceId`~~, ~~`updateCargoDef`~~
 
+実装済み (Phase 3): ~~`rotateCargo`~~, ~~`cameraView`/`setCameraView`~~, ~~`showGrid`/`toggleGrid`~~, ~~`snapToGrid`/`toggleSnap`~~, `gridSizeCm`/`setGridSize`
+
 ### Core: 未実装のモジュール
 
 | モジュール | 設計書 | 対応Phase |
 |-----------|--------|----------|
-| `Voxelizer` | `docs/02-core-engine.md` | Phase 3 (任意回転対応時に必要) |
 | `GravityChecker` | `docs/02-core-engine.md` | Phase 4 |
 | `WeightCalculator` | `docs/02-core-engine.md` | Phase 4 |
+
+実装済み (Phase 3): ~~`Voxelizer`~~ (`src/core/Voxelizer.ts` — voxelize, isAxisAligned, computeRotatedAABB。高速パス/低速パス分岐)
 
 ### Renderer: 未実装のサブシステム
 
 | モジュール | 設計書 | 対応Phase |
 |-----------|--------|----------|
 | `LabelRenderer` | `docs/03-rendering-engine.md` | Phase 5 |
-| `ViewTransition` | `docs/03-rendering-engine.md` | Phase 3 (カメラアニメーション) |
+| `ViewTransition` | `docs/03-rendering-engine.md` | Phase 5 (カメラアニメーション) |
 
 実装済み (Phase 2): ~~`Raycaster`~~ (`src/renderer/Raycaster.ts` — ray-AABB pick, floor intersection, screenToRay)
 
@@ -111,9 +109,10 @@ Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述し
 | コンポーネント | 設計書 | 対応Phase |
 |--------------|--------|----------|
 | `StatsPanel` | `docs/05-ui-components.md` | Phase 4 |
-| `ViewButtons` | `docs/05-ui-components.md` | Phase 3 |
 
-実装済み (Phase 2): ~~`ErrorBoundary`~~ (`src/ui/ErrorBoundary.tsx`), ~~`WebGPUFallback`~~ (`src/ui/WebGPUFallback.tsx`), ~~`PlacementControls`~~ (`src/ui/PlacementControls.tsx`), ~~`ToolBar`~~ (`src/ui/ToolBar.tsx`), `HelpOverlay` (`src/ui/HelpOverlay.tsx`)
+実装済み (Phase 2): ~~`ErrorBoundary`~~, ~~`WebGPUFallback`~~, ~~`PlacementControls`~~, ~~`ToolBar`~~, ~~`HelpOverlay`~~
+
+実装済み (Phase 3): ~~`ViewButtons`~~ (`src/ui/ViewButtons.tsx` — 6種カメラプリセットボタン)
 
 ### Phase 2 で追加された主要機能
 
@@ -124,6 +123,18 @@ Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述し
 - **PlacementControls**: 選択中荷物の情報パネル（名前・位置・寸法・重量）+ 削除/選択解除ボタン
 - **ToolBar**: キャンバス下部フローティングツールバー（Undo/Redo + 将来機能の disabled ボタン）
 - **HelpOverlay**: キャンバス右上に常時表示する半透明の操作ガイド（`pointer-events: none`）
+
+### Phase 3 で追加された主要機能
+
+- **Voxelizer** (`src/core/Voxelizer.ts`): 任意回転対応のボクセル化エンジン。軸整列時は高速パス（AABB のみ、`fillBox` 使用）、任意角度は低速パス（逆回転でローカル判定）
+- **任意回転**: Y-X-Z 順の回転行列。History 全コマンドを `VoxelizeResult` ベースに統一。`RotateCommand` 追加
+- **回転 UI**: PlacementControls に各軸 +90° ボタン。R/Shift+R（Y軸）、T（X軸）、F（Z軸）キーボードショートカット
+- **D&D 中回転**: ドラッグ中に R/T/F キーで ghost の回転変更、回転状態のまま配置
+- **カメラプリセット**: ViewButtons（Front/Back/Left/Right/Top/Iso）。オービット操作で自動的に 'free' にリセット
+- **カスタムコンテナ**: ContainerSelector に「カスタム」オプション追加。幅/高さ/奥行を 10-2000cm で指定
+- **Grid 表示切替**: ToolBar の Grid ボタンでフロアグリッドの表示/非表示切替
+- **スナップ**: ToolBar の Snap ボタン + サイズ選択（1/5/10cm）。有効時に配置の X/Z をグリッドに吸着
+- **回転対応モデル行列**: `M = T(pos) × Rz × Rx × Ry × T(center) × S(size)`。回転なし時は従来と同等のパフォーマンス
 
 ## Design Documents
 
