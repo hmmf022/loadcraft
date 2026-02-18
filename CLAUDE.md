@@ -85,10 +85,9 @@ Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述し
 | `snapToGrid` / `toggleSnap` | Phase 3 | スナップ機能 |
 | `saveState` / `loadState` | Phase 4 | JSON ファイル入出力 |
 | `weightResult` | Phase 4 | 重量・重心の計算結果 |
-| `updateCargoDef` | Phase 2 | 定義の編集 |
 | `importCargoDefs` | Phase 4 | CSV/JSON インポート |
 
-実装済み (Phase 2): ~~`moveCargo`~~, ~~`dragState`/`setDragState`~~, ~~`selectedInstanceId`/`setSelectedInstanceId`~~
+実装済み (Phase 2): ~~`moveCargo`~~, ~~`dragState`/`setDragState`~~, ~~`selectedInstanceId`/`setSelectedInstanceId`~~, ~~`updateCargoDef`~~
 
 ### Core: 未実装のモジュール
 
@@ -122,6 +121,9 @@ Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述し
 - **3D 選択**: クリックで荷物を選択（ray-AABB ピッキング）、選択ハイライト表示
 - **3D 移動**: 選択した荷物を右ドラッグで移動。ゴースト表示 + 衝突判定。移動中は自身を `excludeInstanceId` で除外
 - **選択ハイライト**: cargo シェーダで `selectedInstanceId` に一致するインスタンスを明るく表示
+- **PlacementControls**: 選択中荷物の情報パネル（名前・位置・寸法・重量）+ 削除/選択解除ボタン
+- **ToolBar**: キャンバス下部フローティングツールバー（Undo/Redo + 将来機能の disabled ボタン）
+- **HelpOverlay**: キャンバス右上に常時表示する半透明の操作ガイド（`pointer-events: none`）
 
 ## Design Documents
 
