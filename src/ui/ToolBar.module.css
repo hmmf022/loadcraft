@@ -40,3 +40,24 @@
   opacity: 0.4;
   cursor: default;
 }
+
+.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.active:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  opacity: 0.9;
+}
+
+.snapSelect {
+  padding: 4px 6px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+}

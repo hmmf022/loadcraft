@@ -3,21 +3,39 @@ import { useAppStore } from '../state/store'
 import { CONTAINER_PRESETS } from '../core/types'
 import styles from './ContainerSelector.module.css'
 
+const CUSTOM_IDX = CONTAINER_PRESETS.length
+
 export function ContainerSelector() {
   const [presetIdx, setPresetIdx] = useState(0)
+  const [customW, setCustomW] = useState(400)
+  const [customH, setCustomH] = useState(200)
+  const [customD, setCustomD] = useState(300)
   const setContainer = useAppStore((s) => s.setContainer)
+  const container = useAppStore((s) => s.container)
 
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const idx = parseInt(e.target.value)
-    const preset = CONTAINER_PRESETS[idx]
-    if (!preset) return
-
+  const confirmChange = (): boolean => {
     const placements = useAppStore.getState().placements
     if (placements.length > 0) {
       if (!confirm('コンテナを変更すると、すべての配置がクリアされます。続行しますか？')) {
-        return
+        return false
       }
     }
+    return true
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const idx = parseInt(e.target.value)
+
+    if (idx === CUSTOM_IDX) {
+      // Switch to custom mode (don't change container yet)
+      setPresetIdx(CUSTOM_IDX)
+      return
+    }
+
+    const preset = CONTAINER_PRESETS[idx]
+    if (!preset) return
+
+    if (!confirmChange()) return
 
     setPresetIdx(idx)
     setContainer({
@@ -28,20 +46,78 @@ export function ContainerSelector() {
     })
   }
 
+  const handleApplyCustom = () => {
+    const w = Math.max(10, Math.min(2000, customW))
+    const h = Math.max(10, Math.min(2000, customH))
+    const d = Math.max(10, Math.min(2000, customD))
+
+    if (!confirmChange()) return
+
+    setContainer({
+      widthCm: w,
+      heightCm: h,
+      depthCm: d,
+      maxPayloadKg: 30000,
+    })
+  }
+
+  const isCustom = presetIdx === CUSTOM_IDX
+
   return (
     <div className={styles.selector}>
       <select value={presetIdx} onChange={handleChange} className={styles.select}>
         {CONTAINER_PRESETS.map((p, i) => (
           <option key={p.name} value={i}>{p.name}</option>
         ))}
+        <option value={CUSTOM_IDX}>カスタム</option>
       </select>
-      <div className={styles.info}>
-        {CONTAINER_PRESETS[presetIdx] && (
+
+      {isCustom ? (
+        <div className={styles.customInputs}>
+          <div className={styles.inputRow}>
+            <label className={styles.inputLabel}>幅 (cm)</label>
+            <input
+              type="number"
+              className={styles.input}
+              value={customW}
+              min={10}
+              max={2000}
+              onChange={(e) => setCustomW(parseInt(e.target.value) || 10)}
+            />
+          </div>
+          <div className={styles.inputRow}>
+            <label className={styles.inputLabel}>高さ (cm)</label>
+            <input
+              type="number"
+              className={styles.input}
+              value={customH}
+              min={10}
+              max={2000}
+              onChange={(e) => setCustomH(parseInt(e.target.value) || 10)}
+            />
+          </div>
+          <div className={styles.inputRow}>
+            <label className={styles.inputLabel}>奥行 (cm)</label>
+            <input
+              type="number"
+              className={styles.input}
+              value={customD}
+              min={10}
+              max={2000}
+              onChange={(e) => setCustomD(parseInt(e.target.value) || 10)}
+            />
+          </div>
+          <button className={styles.applyButton} onClick={handleApplyCustom}>
+            適用
+          </button>
+        </div>
+      ) : (
+        <div className={styles.info}>
           <span className={styles.dims}>
-            {CONTAINER_PRESETS[presetIdx]!.widthCm} × {CONTAINER_PRESETS[presetIdx]!.heightCm} × {CONTAINER_PRESETS[presetIdx]!.depthCm} cm
+            {container.widthCm} × {container.heightCm} × {container.depthCm} cm
           </span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

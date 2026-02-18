@@ -1,8 +1,9 @@
 import { create } from 'zustand'
-import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState } from '../core/types'
+import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView } from '../core/types'
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
-import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand } from '../core/History'
+import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand } from '../core/History'
+import { voxelize } from '../core/Voxelizer'
 
 const defaultContainer = CONTAINER_PRESETS[0]!
 const historyManager = new HistoryManager(100)
@@ -21,9 +22,10 @@ export interface AppState {
   // Placements
   placements: PlacedCargo[]
   nextInstanceId: number
-  placeCargo: (cargoDefId: string, position: Vec3) => void
+  placeCargo: (cargoDefId: string, position: Vec3, rotation?: Vec3) => void
   removePlacement: (instanceId: number) => void
   moveCargo: (instanceId: number, newPosition: Vec3) => void
+  rotateCargo: (instanceId: number, newRotation: Vec3) => void
 
   // Selection
   selectedInstanceId: number | null
@@ -32,6 +34,18 @@ export interface AppState {
   // Drag state
   dragState: DragState | null
   setDragState: (state: DragState | null) => void
+
+  // Camera view
+  cameraView: CameraView
+  setCameraView: (view: CameraView) => void
+
+  // Grid / Snap
+  showGrid: boolean
+  toggleGrid: () => void
+  snapToGrid: boolean
+  toggleSnap: () => void
+  gridSizeCm: number
+  setGridSize: (size: number) => void
 
   // Render version (triggers renderer updates)
   renderVersion: number
@@ -98,34 +112,32 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Placements
   placements: [],
   nextInstanceId: 1,
-  placeCargo: (cargoDefId, position) => {
+  placeCargo: (cargoDefId, position, rotation) => {
     const state = get()
     const def = state.cargoDefs.find((d) => d.id === cargoDefId)
     if (!def) return
     if (state.nextInstanceId > 65534) return
 
     const instanceId = state.nextInstanceId
-    const x0 = Math.round(position.x)
-    const y0 = Math.round(position.y)
-    const z0 = Math.round(position.z)
-    const x1 = x0 + def.widthCm - 1
-    const y1 = y0 + def.heightCm - 1
-    const z1 = z0 + def.depthCm - 1
+    const pos = { x: Math.round(position.x), y: Math.round(position.y), z: Math.round(position.z) }
+    const rot = rotation ?? { x: 0, y: 0, z: 0 }
 
+    const result = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, rot)
     const grid = getVoxelGrid()
 
-    // Check bounds
-    if (x1 >= grid.width || y1 >= grid.height || z1 >= grid.depth) return
+    // Bounds check via AABB
+    const { min, max } = result.aabb
+    if (min.x < 0 || min.y < 0 || min.z < 0) return
+    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return
 
     const newPlacement: PlacedCargo = {
       instanceId,
       cargoDefId,
-      positionCm: { x: x0, y: y0, z: z0 },
-      rotationDeg: { x: 0, y: 0, z: 0 },
+      positionCm: pos,
+      rotationDeg: rot,
     }
 
-    // Execute via history
-    const cmd = new PlaceCommand(instanceId, x0, y0, z0, x1, y1, z1, def.name, newPlacement)
+    const cmd = new PlaceCommand(instanceId, result, def.name, newPlacement)
     historyManager.executeCommand(cmd, grid)
 
     set({
@@ -145,15 +157,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const grid = getVoxelGrid()
 
     if (def) {
-      const x0 = Math.round(placement.positionCm.x)
-      const y0 = Math.round(placement.positionCm.y)
-      const z0 = Math.round(placement.positionCm.z)
-      const cmd = new RemoveCommand(
-        instanceId, x0, y0, z0,
-        x0 + def.widthCm - 1, y0 + def.heightCm - 1, z0 + def.depthCm - 1,
-        def.name,
-        placement,
-      )
+      const pos = placement.positionCm
+      const rot = placement.rotationDeg
+      const result = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, rot)
+      const cmd = new RemoveCommand(instanceId, result, def.name, placement)
       historyManager.executeCommand(cmd, grid)
     } else {
       grid.clearObject(instanceId)
@@ -176,31 +183,77 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!def) return
 
     const grid = getVoxelGrid()
-    const oldX0 = Math.round(placement.positionCm.x)
-    const oldY0 = Math.round(placement.positionCm.y)
-    const oldZ0 = Math.round(placement.positionCm.z)
-    const newX0 = Math.round(newPosition.x)
-    const newY0 = Math.round(newPosition.y)
-    const newZ0 = Math.round(newPosition.z)
-    const w = def.widthCm - 1
-    const h = def.heightCm - 1
-    const d = def.depthCm - 1
+    const oldPos = placement.positionCm
+    const rot = placement.rotationDeg
+    const newPos = { x: Math.round(newPosition.x), y: Math.round(newPosition.y), z: Math.round(newPosition.z) }
 
-    // Check bounds
-    if (newX0 + w >= grid.width || newY0 + h >= grid.height || newZ0 + d >= grid.depth) return
-    if (newX0 < 0 || newY0 < 0 || newZ0 < 0) return
+    const oldResult = voxelize(def.widthCm, def.heightCm, def.depthCm, oldPos, rot)
+    const newResult = voxelize(def.widthCm, def.heightCm, def.depthCm, newPos, rot)
+
+    // Bounds check
+    const { min, max } = newResult.aabb
+    if (min.x < 0 || min.y < 0 || min.z < 0) return
+    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return
 
     const updatedPlacement: PlacedCargo = {
       ...placement,
-      positionCm: { x: newX0, y: newY0, z: newZ0 },
+      positionCm: newPos,
     }
 
     const cmd = new MoveCommand(
-      instanceId,
-      oldX0, oldY0, oldZ0, oldX0 + w, oldY0 + h, oldZ0 + d,
-      newX0, newY0, newZ0, newX0 + w, newY0 + h, newZ0 + d,
-      def.name,
-      updatedPlacement,
+      instanceId, oldResult, newResult,
+      def.name, updatedPlacement, placement,
+    )
+    historyManager.executeCommand(cmd, grid)
+
+    set({
+      placements: state.placements.map((p) =>
+        p.instanceId === instanceId ? updatedPlacement : p,
+      ),
+      canUndo: historyManager.canUndo,
+      canRedo: historyManager.canRedo,
+      renderVersion: state.renderVersion + 1,
+    })
+  },
+  rotateCargo: (instanceId, newRotation) => {
+    const state = get()
+    const placement = state.placements.find((p) => p.instanceId === instanceId)
+    if (!placement) return
+
+    const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
+    if (!def) return
+
+    const grid = getVoxelGrid()
+    const pos = placement.positionCm
+    const oldRot = placement.rotationDeg
+
+    const oldResult = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, oldRot)
+    const newResult = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, newRotation)
+
+    // Bounds check
+    const { min, max } = newResult.aabb
+    if (min.x < 0 || min.y < 0 || min.z < 0) return
+    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return
+
+    // Collision check: clear old, test new
+    fillFromResult(grid, oldResult, 0)
+    const hasCollision = checkCollision(grid, newResult, instanceId)
+    if (hasCollision) {
+      // Restore old
+      fillFromResult(grid, oldResult, instanceId)
+      return
+    }
+    // Restore old (RotateCommand.execute will handle the actual change)
+    fillFromResult(grid, oldResult, instanceId)
+
+    const updatedPlacement: PlacedCargo = {
+      ...placement,
+      rotationDeg: newRotation,
+    }
+
+    const cmd = new RotateCommand(
+      instanceId, oldResult, newResult,
+      def.name, updatedPlacement, placement,
     )
     historyManager.executeCommand(cmd, grid)
 
@@ -222,6 +275,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   dragState: null,
   setDragState: (dragState) => set({ dragState }),
 
+  // Camera view
+  cameraView: 'free' as CameraView,
+  setCameraView: (view) => set({ cameraView: view }),
+
+  // Grid / Snap
+  showGrid: true,
+  toggleGrid: () => set((state) => ({ showGrid: !state.showGrid, renderVersion: state.renderVersion + 1 })),
+  snapToGrid: false,
+  toggleSnap: () => set((state) => ({ snapToGrid: !state.snapToGrid })),
+  gridSizeCm: 1,
+  setGridSize: (size) => set({ gridSizeCm: size }),
+
   // Render version
   renderVersion: 0,
 
@@ -236,7 +301,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get()
 
     if (command instanceof PlaceCommand) {
-      // Undo place → remove the placement
       set({
         placements: state.placements.filter((p) => p.instanceId !== command.instanceId),
         canUndo: historyManager.canUndo,
@@ -244,7 +308,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         renderVersion: state.renderVersion + 1,
       })
     } else if (command instanceof RemoveCommand) {
-      // Undo remove → restore the placement
       set({
         placements: [...state.placements, command.placement],
         canUndo: historyManager.canUndo,
@@ -252,14 +315,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         renderVersion: state.renderVersion + 1,
       })
     } else if (command instanceof MoveCommand) {
-      // Undo move → restore old position
-      const oldPlacement: PlacedCargo = {
-        ...command.placement,
-        positionCm: { x: command.oldX0, y: command.oldY0, z: command.oldZ0 },
-      }
       set({
         placements: state.placements.map((p) =>
-          p.instanceId === command.instanceId ? oldPlacement : p,
+          p.instanceId === command.instanceId ? command.oldPlacement : p,
+        ),
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    } else if (command instanceof RotateCommand) {
+      set({
+        placements: state.placements.map((p) =>
+          p.instanceId === command.instanceId ? command.oldPlacement : p,
         ),
         canUndo: historyManager.canUndo,
         canRedo: historyManager.canRedo,
@@ -275,7 +342,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get()
 
     if (command instanceof PlaceCommand) {
-      // Redo place → add the placement back
       set({
         placements: [...state.placements, command.placement],
         canUndo: historyManager.canUndo,
@@ -283,7 +349,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         renderVersion: state.renderVersion + 1,
       })
     } else if (command instanceof RemoveCommand) {
-      // Redo remove → remove the placement
       set({
         placements: state.placements.filter((p) => p.instanceId !== command.instanceId),
         canUndo: historyManager.canUndo,
@@ -291,7 +356,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         renderVersion: state.renderVersion + 1,
       })
     } else if (command instanceof MoveCommand) {
-      // Redo move → apply new position
+      set({
+        placements: state.placements.map((p) =>
+          p.instanceId === command.instanceId ? command.placement : p,
+        ),
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+    } else if (command instanceof RotateCommand) {
       set({
         placements: state.placements.map((p) =>
           p.instanceId === command.instanceId ? command.placement : p,
@@ -303,3 +376,35 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 }))
+
+// Helper: fill/clear voxels from VoxelizeResult
+import type { VoxelizeResult } from '../core/Voxelizer'
+import type { VoxelGrid } from '../core/VoxelGrid'
+
+function fillFromResult(grid: VoxelGrid, result: VoxelizeResult, id: number): void {
+  if (result.usesFastPath) {
+    const { min, max } = result.aabb
+    grid.fillBox(min.x, min.y, min.z, max.x - 1, max.y - 1, max.z - 1, id)
+  } else {
+    grid.fillVoxels(result.voxels, id)
+  }
+}
+
+function checkCollision(grid: VoxelGrid, result: VoxelizeResult, excludeId: number): boolean {
+  if (result.usesFastPath) {
+    const { min, max } = result.aabb
+    // Generate voxels for collision check
+    for (let z = min.z; z < max.z; z++) {
+      for (let y = min.y; y < max.y; y++) {
+        for (let x = min.x; x < max.x; x++) {
+          if (!grid.isInBounds(x, y, z)) return true
+          const val = grid.get(x, y, z)
+          if (val !== 0 && val !== excludeId) return true
+        }
+      }
+    }
+    return false
+  } else {
+    return grid.hasCollision(result.voxels, excludeId)
+  }
+}

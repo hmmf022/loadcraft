@@ -30,6 +30,7 @@ export class CameraController {
   onMoveStart: MoveStartCallback | null = null
   onMove: MoveCallback | null = null
   onMoveEnd: MoveEndCallback | null = null
+  onOrbitStart: (() => void) | null = null
 
   /** Set to true when a selected object is under the cursor */
   setMoveEnabled(enabled: boolean): void {
@@ -81,6 +82,9 @@ export class CameraController {
           this.onMove?.(e.clientX - rect.left, e.clientY - rect.top)
         } else {
           // Left button: orbit
+          if (totalDist > this.clickThreshold) {
+            this.onOrbitStart?.()
+          }
           this.camera.rotate(-dx * this.rotateSensitivity, -dy * this.rotateSensitivity)
         }
       } else if (this.button === 1 || this.button === 2) {

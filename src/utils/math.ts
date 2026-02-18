@@ -100,6 +100,30 @@ export function mat4Scaling(sx: number, sy: number, sz: number) {
   return m
 }
 
+export function mat4RotationX(radians: number) {
+  const c = Math.cos(radians)
+  const s = Math.sin(radians)
+  const m = new Float32Array(16)
+  m[0] = 1; m[5] = c; m[6] = s; m[9] = -s; m[10] = c; m[15] = 1
+  return m
+}
+
+export function mat4RotationY(radians: number) {
+  const c = Math.cos(radians)
+  const s = Math.sin(radians)
+  const m = new Float32Array(16)
+  m[0] = c; m[2] = -s; m[5] = 1; m[8] = s; m[10] = c; m[15] = 1
+  return m
+}
+
+export function mat4RotationZ(radians: number) {
+  const c = Math.cos(radians)
+  const s = Math.sin(radians)
+  const m = new Float32Array(16)
+  m[0] = c; m[1] = s; m[4] = -s; m[5] = c; m[10] = 1; m[15] = 1
+  return m
+}
+
 export function mat4Inverse(m: Float32Array) {
   const out = new Float32Array(16)
   const m00 = m[0]!, m01 = m[1]!, m02 = m[2]!, m03 = m[3]!

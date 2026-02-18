@@ -5,9 +5,19 @@ import { pick, screenToRay, intersectRayPlane } from '../renderer/Raycaster'
 import type { PickItem } from '../renderer/Raycaster'
 import type { Vec3 } from '../core/types'
 import { getVoxelGrid } from '../core/voxelGridSingleton'
+import { computeRotatedAABB, voxelize } from '../core/Voxelizer'
 import styles from './CanvasPanel.module.css'
 
-/** Build AABB pick items from current placements */
+const CAMERA_PRESETS: Record<string, { theta: number; phi: number }> = {
+  front:     { theta: 0,            phi: Math.PI / 2 },
+  back:      { theta: Math.PI,      phi: Math.PI / 2 },
+  left:      { theta: -Math.PI / 2, phi: Math.PI / 2 },
+  right:     { theta: Math.PI / 2,  phi: Math.PI / 2 },
+  top:       { theta: 0,            phi: 0.01 },
+  isometric: { theta: Math.PI / 4,  phi: Math.PI / 4 },
+}
+
+/** Build AABB pick items from current placements (rotation-aware) */
 function buildPickItems(): PickItem[] {
   const state = useAppStore.getState()
   const defMap = new Map<string, { widthCm: number; heightCm: number; depthCm: number }>()
@@ -18,96 +28,105 @@ function buildPickItems(): PickItem[] {
   for (const p of state.placements) {
     const def = defMap.get(p.cargoDefId)
     if (!def) continue
+    const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
     items.push({
       instanceId: p.instanceId,
-      aabb: {
-        min: { x: p.positionCm.x, y: p.positionCm.y, z: p.positionCm.z },
-        max: {
-          x: p.positionCm.x + def.widthCm,
-          y: p.positionCm.y + def.heightCm,
-          z: p.positionCm.z + def.depthCm,
-        },
-      },
+      aabb,
     })
   }
   return items
 }
 
-/** Check if a position is valid for placing cargo */
-function isValidPosition(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, excludeInstanceId?: number): boolean {
+/** Check if a position is valid for placing cargo (rotation-aware) */
+function isValidPosition(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): boolean {
   const grid = getVoxelGrid()
-  const x0 = Math.round(pos.x)
-  const y0 = Math.round(pos.y)
-  const z0 = Math.round(pos.z)
-  const x1 = x0 + widthCm - 1
-  const y1 = y0 + heightCm - 1
-  const z1 = z0 + depthCm - 1
+  const roundedPos = { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) }
+  const result = voxelize(widthCm, heightCm, depthCm, roundedPos, rotationDeg)
 
   // Bounds check
-  if (x0 < 0 || y0 < 0 || z0 < 0) return false
-  if (x1 >= grid.width || y1 >= grid.height || z1 >= grid.depth) return false
+  const { min, max } = result.aabb
+  if (min.x < 0 || min.y < 0 || min.z < 0) return false
+  if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return false
 
-  // Collision check using voxels
-  const voxels: Vec3[] = []
-  for (let z = z0; z <= z1; z++) {
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        voxels.push({ x, y, z })
+  // Collision check
+  if (result.usesFastPath) {
+    for (let z = min.z; z < max.z; z++) {
+      for (let y = min.y; y < max.y; y++) {
+        for (let x = min.x; x < max.x; x++) {
+          const val = grid.get(x, y, z)
+          if (val !== 0 && val !== excludeInstanceId) return false
+        }
       }
     }
+    return true
+  } else {
+    return !grid.hasCollision(result.voxels, excludeInstanceId)
   }
-  return !grid.hasCollision(voxels, excludeInstanceId)
 }
 
 /**
  * Snap position: determine X,Z from hit point, then find the lowest valid Y
  * (gravity stacking — cargo drops down and lands on top of existing items)
  */
-function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm: number, excludeInstanceId?: number): Vec3 {
+function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): Vec3 {
   const state = useAppStore.getState()
   const cw = state.container.widthCm
   const ch = state.container.heightCm
   const cd = state.container.depthCm
 
-  let x = Math.round(hitPoint.x - widthCm / 2)
-  let z = Math.round(hitPoint.z - depthCm / 2)
+  // Compute AABB size for the rotated box at origin
+  const testAABB = computeRotatedAABB(widthCm, heightCm, depthCm, { x: 0, y: 0, z: 0 }, rotationDeg)
+  const aabbW = testAABB.max.x - testAABB.min.x
+  const aabbD = testAABB.max.z - testAABB.min.z
+  const aabbH = testAABB.max.y - testAABB.min.y
+  // Offset from position origin to AABB min
+  const offsetX = testAABB.min.x
+  const offsetZ = testAABB.min.z
 
-  // Clamp to container bounds
-  x = Math.max(0, Math.min(x, cw - widthCm))
-  z = Math.max(0, Math.min(z, cd - depthCm))
+  let x = Math.round(hitPoint.x - aabbW / 2 - offsetX)
+  let z = Math.round(hitPoint.z - aabbD / 2 - offsetZ)
 
-  // Find the lowest valid Y by scanning the VoxelGrid from bottom up
+  // Apply grid snap
+  const { snapToGrid, gridSizeCm } = useAppStore.getState()
+  if (snapToGrid && gridSizeCm > 1) {
+    x = Math.round(x / gridSizeCm) * gridSizeCm
+    z = Math.round(z / gridSizeCm) * gridSizeCm
+  }
+
+  // Clamp so that the AABB fits within container
+  x = Math.max(-offsetX, Math.min(x, cw - aabbW - offsetX))
+  z = Math.max(-offsetZ, Math.min(z, cd - aabbD - offsetZ))
+
+  // Find the lowest valid Y by scanning from bottom up
   const grid = getVoxelGrid()
   let bestY = 0
 
-  for (let y = 0; y + heightCm <= ch; y++) {
-    // Check if this Y level has a collision
+  for (let y = 0; y + aabbH <= ch; y++) {
+    const testPos = { x, y, z }
+    const result = voxelize(widthCm, heightCm, depthCm, testPos, rotationDeg)
+    const { min, max } = result.aabb
+    if (min.x < 0 || min.y < 0 || min.z < 0) continue
+    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) continue
+
     let collision = false
-    for (let vz = z; vz < z + depthCm && !collision; vz++) {
-      for (let vx = x; vx < x + widthCm && !collision; vx++) {
-        const val = grid.get(vx, y, vz)
-        if (val !== 0 && val !== excludeInstanceId) {
-          collision = true
-        }
-      }
-    }
-    if (!collision) {
-      // Check if the entire box fits starting from this Y
-      let boxFits = true
-      for (let vy = y; vy < y + heightCm && boxFits; vy++) {
-        for (let vz = z; vz < z + depthCm && boxFits; vz++) {
-          for (let vx = x; vx < x + widthCm && boxFits; vx++) {
+    if (result.usesFastPath) {
+      for (let vz = min.z; vz < max.z && !collision; vz++) {
+        for (let vy = min.y; vy < max.y && !collision; vy++) {
+          for (let vx = min.x; vx < max.x && !collision; vx++) {
             const val = grid.get(vx, vy, vz)
             if (val !== 0 && val !== excludeInstanceId) {
-              boxFits = false
+              collision = true
             }
           }
         }
       }
-      if (boxFits) {
-        bestY = y
-        break
-      }
+    } else {
+      collision = grid.hasCollision(result.voxels, excludeInstanceId)
+    }
+
+    if (!collision) {
+      bestY = y
+      break
     }
   }
 
@@ -167,8 +186,9 @@ export function CanvasPanel() {
 
     // Show ghost at current position
     const pos = placement.positionCm
-    const valid = isValidPosition(pos, def.widthCm, def.heightCm, def.depthCm, selectedId)
-    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, valid)
+    const rot = placement.rotationDeg
+    const valid = isValidPosition(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId)
+    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, valid, rot)
   }, [])
 
   const handleMove = useCallback((screenX: number, screenY: number) => {
@@ -186,14 +206,15 @@ export function CanvasPanel() {
     const def = store.cargoDefs.find((d) => d.id === placement.cargoDefId)
     if (!def) return
 
+    const rot = placement.rotationDeg
     const invVP = renderer.camera.getInverseViewProjMatrix()
     const ray = screenToRay(screenX, screenY, canvas.width, canvas.height, invVP)
     const floorHit = intersectRayPlane(ray, 0)
     if (!floorHit) return
 
-    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, movingId)
-    const valid = isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, movingId)
-    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, valid)
+    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
+    const valid = isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
+    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, valid, rot)
   }, [])
 
   const handleMoveEnd = useCallback((screenX: number, screenY: number) => {
@@ -228,24 +249,28 @@ export function CanvasPanel() {
       return
     }
 
+    const rot = placement.rotationDeg
     const invVP = renderer.camera.getInverseViewProjMatrix()
     const ray = screenToRay(screenX, screenY, canvas.width, canvas.height, invVP)
     const floorHit = intersectRayPlane(ray, 0)
 
     let newPos = origPos
     if (floorHit) {
-      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, movingId)
-      if (isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, movingId)) {
+      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
+      if (isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)) {
         newPos = snapped
       }
     }
 
     // Restore the grid at original position first (moveCargo will handle the rest)
     const grid = getVoxelGrid()
-    const ox = Math.round(origPos.x)
-    const oy = Math.round(origPos.y)
-    const oz = Math.round(origPos.z)
-    grid.fillBox(ox, oy, oz, ox + def.widthCm - 1, oy + def.heightCm - 1, oz + def.depthCm - 1, movingId)
+    const result = voxelize(def.widthCm, def.heightCm, def.depthCm, origPos, rot)
+    if (result.usesFastPath) {
+      const { min, max } = result.aabb
+      grid.fillBox(min.x, min.y, min.z, max.x - 1, max.y - 1, max.z - 1, movingId)
+    } else {
+      grid.fillVoxels(result.voxels, movingId)
+    }
 
     if (newPos !== origPos) {
       store.moveCargo(movingId, newPos)
@@ -275,6 +300,11 @@ export function CanvasPanel() {
       renderer.cameraController.onMoveStart = handleMoveStart
       renderer.cameraController.onMove = handleMove
       renderer.cameraController.onMoveEnd = handleMoveEnd
+
+      // Reset cameraView to 'free' when user orbits
+      renderer.cameraController.onOrbitStart = () => {
+        useAppStore.getState().setCameraView('free')
+      }
 
       // Set initial size
       const div = containerRef.current
@@ -316,6 +346,9 @@ export function CanvasPanel() {
               state.container.depthCm,
             )
           }
+
+          // Sync showGrid
+          renderer.showGrid = state.showGrid
         }
 
         // Update selection highlight even if renderVersion didn't change
@@ -326,6 +359,19 @@ export function CanvasPanel() {
           // Update moveEnabled on camera controller based on selection
           const hasSelection = state.selectedInstanceId !== null
           renderer.cameraController.setMoveEnabled(hasSelection)
+        }
+
+        // Camera view change
+        if (state.cameraView !== prevState.cameraView && state.cameraView !== 'free') {
+          const preset = CAMERA_PRESETS[state.cameraView]
+          if (preset) {
+            renderer.camera.setState({ theta: preset.theta, phi: preset.phi })
+          }
+        }
+
+        // showGrid change (even if renderVersion didn't change, e.g. toggle only)
+        if (state.showGrid !== prevState.showGrid) {
+          renderer.showGrid = state.showGrid
         }
       })
 
@@ -397,9 +443,10 @@ export function CanvasPanel() {
       return
     }
 
-    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm)
-    const valid = isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm)
-    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, valid)
+    const rot = dragState.currentRotation
+    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot)
+    const valid = isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
+    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, valid, rot)
     store.setDragState({ ...dragState, currentPosition: snapped, isValid: valid })
   }, [])
 
@@ -424,6 +471,9 @@ export function CanvasPanel() {
     const def = store.cargoDefs.find((d) => d.id === cargoDefId)
     if (!def) return
 
+    const dragState = store.dragState
+    const rot = dragState?.currentRotation ?? { x: 0, y: 0, z: 0 }
+
     const rect = canvas.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
     const screenX = (e.clientX - rect.left) * dpr
@@ -434,9 +484,9 @@ export function CanvasPanel() {
     const floorHit = intersectRayPlane(ray, 0)
 
     if (floorHit) {
-      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm)
-      if (isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm)) {
-        store.placeCargo(cargoDefId, snapped)
+      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot)
+      if (isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot)) {
+        store.placeCargo(cargoDefId, snapped, rot)
       }
     }
 

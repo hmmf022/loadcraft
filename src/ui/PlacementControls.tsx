@@ -7,6 +7,7 @@ export function PlacementControls() {
   const cargoDefs = useAppStore((s) => s.cargoDefs)
   const removePlacement = useAppStore((s) => s.removePlacement)
   const setSelectedInstanceId = useAppStore((s) => s.setSelectedInstanceId)
+  const rotateCargo = useAppStore((s) => s.rotateCargo)
 
   if (selectedInstanceId === null) {
     return (
@@ -29,6 +30,14 @@ export function PlacementControls() {
   if (!def) return null
 
   const pos = placement.positionCm
+  const rot = placement.rotationDeg
+
+  const handleRotate = (axis: 'x' | 'y' | 'z', delta: number) => {
+    rotateCargo(selectedInstanceId, {
+      ...rot,
+      [axis]: rot[axis] + delta,
+    })
+  }
 
   return (
     <div className={styles.panel}>
@@ -55,6 +64,23 @@ export function PlacementControls() {
             <span className={styles.detailValue}>{def.weightKg} kg</span>
           </div>
         </div>
+
+        <div className={styles.rotationSection}>
+          <div className={styles.rotationLabel}>回転</div>
+          <div className={styles.rotationRow}>
+            <span className={styles.rotationAxis}>RX: {rot.x}°</span>
+            <button className={styles.rotateButton} onClick={() => handleRotate('x', 90)}>+90°</button>
+          </div>
+          <div className={styles.rotationRow}>
+            <span className={styles.rotationAxis}>RY: {rot.y}°</span>
+            <button className={styles.rotateButton} onClick={() => handleRotate('y', 90)}>+90°</button>
+          </div>
+          <div className={styles.rotationRow}>
+            <span className={styles.rotationAxis}>RZ: {rot.z}°</span>
+            <button className={styles.rotateButton} onClick={() => handleRotate('z', 90)}>+90°</button>
+          </div>
+        </div>
+
         <div className={styles.actions}>
           <button
             className={styles.deleteButton}

@@ -59,8 +59,11 @@ export interface GridStats {
 export interface DragState {
   cargoDefId: string
   currentPosition: Vec3 | null
+  currentRotation: Vec3
   isValid: boolean
 }
+
+export type CameraView = 'free' | 'front' | 'back' | 'left' | 'right' | 'top' | 'isometric'
 
 export const CONTAINER_PRESETS: ContainerPreset[] = [
   { name: '20ft Standard', widthCm: 590, heightCm: 239, depthCm: 235, maxPayloadKg: 28200 },

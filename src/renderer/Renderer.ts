@@ -3,8 +3,34 @@ import { CameraController } from './CameraController'
 import { createCargoPipeline, createGhostPipeline, INSTANCE_BYTE_SIZE } from './pipelines/CargoPipeline'
 import { createContainerPipelines } from './pipelines/ContainerPipeline'
 import { createGridPipeline } from './pipelines/GridPipeline'
-import { mat4Translation, mat4Scaling, mat4Multiply, mat4Identity } from '../utils/math'
+import { mat4Translation, mat4Scaling, mat4Multiply, mat4Identity, mat4RotationX, mat4RotationY, mat4RotationZ } from '../utils/math'
 import type { PlacedCargo, CargoItemDef, Vec3 } from '../core/types'
+
+const DEG_TO_RAD = Math.PI / 180
+
+function buildModelMatrix(pos: Vec3, rotDeg: Vec3, w: number, h: number, d: number) {
+  const hasRotation = rotDeg.x !== 0 || rotDeg.y !== 0 || rotDeg.z !== 0
+  if (!hasRotation) {
+    // Fast path: same as before
+    const t = mat4Translation(pos.x + w / 2, pos.y + h / 2, pos.z + d / 2)
+    const s = mat4Scaling(w, h, d)
+    return mat4Multiply(t, s)
+  }
+  // M = T(pos) * Rz * Rx * Ry * T(w/2, h/2, d/2) * S(w, h, d)
+  const tPos = mat4Translation(pos.x, pos.y, pos.z)
+  const ry = mat4RotationY(rotDeg.y * DEG_TO_RAD)
+  const rx = mat4RotationX(rotDeg.x * DEG_TO_RAD)
+  const rz = mat4RotationZ(rotDeg.z * DEG_TO_RAD)
+  const tCenter = mat4Translation(w / 2, h / 2, d / 2)
+  const s = mat4Scaling(w, h, d)
+  // chain: tPos * rz * rx * ry * tCenter * s
+  let m = mat4Multiply(tCenter, s)
+  m = mat4Multiply(ry, m)
+  m = mat4Multiply(rx, m)
+  m = mat4Multiply(rz, m)
+  m = mat4Multiply(tPos, m)
+  return m
+}
 
 function hexToRGBA(hex: string): [number, number, number, number] {
   const r = parseInt(hex.slice(1, 3), 16) / 255
@@ -66,6 +92,9 @@ export class Renderer {
 
   // Selection
   selectedInstanceId: number | null = null
+
+  // Grid visibility
+  showGrid = true
 
   constructor() {
     this.camera = new OrbitCamera()
@@ -216,14 +245,8 @@ export class Renderer {
       const h = def.heightCm
       const d = def.depthCm
 
-      // Model matrix = Translation(px+w/2, py+h/2, pz+d/2) * Scale(w, h, d)
-      const translation = mat4Translation(
-        p.positionCm.x + w / 2,
-        p.positionCm.y + h / 2,
-        p.positionCm.z + d / 2,
-      )
-      const scale = mat4Scaling(w, h, d)
-      const modelMatrix = mat4Multiply(translation, scale)
+      // Model matrix = T(pos) * Rz * Rx * Ry * T(w/2, h/2, d/2) * S(w, h, d)
+      const modelMatrix = buildModelMatrix(p.positionCm, p.rotationDeg, w, h, d)
 
       const offset = i * 20
       data.set(modelMatrix, offset)
@@ -252,7 +275,7 @@ export class Renderer {
     })
   }
 
-  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, isValid: boolean): void {
+  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, isValid: boolean, rotationDeg?: Vec3): void {
     if (!position) {
       this.ghostVisible = false
       return
@@ -261,13 +284,8 @@ export class Renderer {
     this.ghostVisible = true
     const data = new Float32Array(20)
 
-    const translation = mat4Translation(
-      position.x + widthCm / 2,
-      position.y + heightCm / 2,
-      position.z + depthCm / 2,
-    )
-    const scale = mat4Scaling(widthCm, heightCm, depthCm)
-    const modelMatrix = mat4Multiply(translation, scale)
+    const rot = rotationDeg ?? { x: 0, y: 0, z: 0 }
+    const modelMatrix = buildModelMatrix(position, rot, widthCm, heightCm, depthCm)
     data.set(modelMatrix, 0)
 
     if (isValid) {
@@ -412,25 +430,27 @@ export class Renderer {
     pass2.drawIndexed(this.containerIndexCount)
     pass2.end()
 
-    // Pass 3: Floor grid
-    const pass3 = commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view: textureView,
-        loadOp: 'load',
-        storeOp: 'store',
-      }],
-      depthStencilAttachment: {
-        view: depthView,
-        depthLoadOp: 'load',
-        depthStoreOp: 'store',
-      },
-    })
-    pass3.setPipeline(this.gridPipeline)
-    pass3.setBindGroup(0, this.cameraBindGroup)
-    pass3.setVertexBuffer(0, this.gridVertexBuffer)
-    pass3.setIndexBuffer(this.gridIndexBuffer, 'uint16')
-    pass3.drawIndexed(this.gridIndexCount)
-    pass3.end()
+    // Pass 3: Floor grid (conditional)
+    if (this.showGrid) {
+      const pass3 = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view: textureView,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+        depthStencilAttachment: {
+          view: depthView,
+          depthLoadOp: 'load',
+          depthStoreOp: 'store',
+        },
+      })
+      pass3.setPipeline(this.gridPipeline)
+      pass3.setBindGroup(0, this.cameraBindGroup)
+      pass3.setVertexBuffer(0, this.gridVertexBuffer)
+      pass3.setIndexBuffer(this.gridIndexBuffer, 'uint16')
+      pass3.drawIndexed(this.gridIndexCount)
+      pass3.end()
+    }
 
     this.device.queue.submit([commandEncoder.finish()])
 

@@ -1,5 +1,6 @@
 import type { VoxelGrid } from './VoxelGrid'
 import type { PlacedCargo } from './types'
+import type { VoxelizeResult } from './Voxelizer'
 
 export interface Command {
   execute(grid: VoxelGrid): boolean
@@ -8,36 +9,36 @@ export interface Command {
   readonly placement: PlacedCargo
 }
 
+/** Fill or clear voxels based on VoxelizeResult */
+function fillFromResult(grid: VoxelGrid, result: VoxelizeResult, id: number): void {
+  if (result.usesFastPath) {
+    const { min, max } = result.aabb
+    grid.fillBox(min.x, min.y, min.z, max.x - 1, max.y - 1, max.z - 1, id)
+  } else {
+    grid.fillVoxels(result.voxels, id)
+  }
+}
+
 export class PlaceCommand implements Command {
   instanceId: number
-  x0: number
-  y0: number
-  z0: number
-  x1: number
-  y1: number
-  z1: number
+  result: VoxelizeResult
   name: string
   placement: PlacedCargo
 
-  constructor(instanceId: number, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, name: string, placement: PlacedCargo) {
+  constructor(instanceId: number, result: VoxelizeResult, name: string, placement: PlacedCargo) {
     this.instanceId = instanceId
-    this.x0 = x0
-    this.y0 = y0
-    this.z0 = z0
-    this.x1 = x1
-    this.y1 = y1
-    this.z1 = z1
+    this.result = result
     this.name = name
     this.placement = placement
   }
 
   execute(grid: VoxelGrid): boolean {
-    grid.fillBox(this.x0, this.y0, this.z0, this.x1, this.y1, this.z1, this.instanceId)
+    fillFromResult(grid, this.result, this.instanceId)
     return true
   }
 
   undo(grid: VoxelGrid): void {
-    grid.fillBox(this.x0, this.y0, this.z0, this.x1, this.y1, this.z1, 0)
+    fillFromResult(grid, this.result, 0)
   }
 
   getDescription(): string {
@@ -47,34 +48,24 @@ export class PlaceCommand implements Command {
 
 export class RemoveCommand implements Command {
   instanceId: number
-  x0: number
-  y0: number
-  z0: number
-  x1: number
-  y1: number
-  z1: number
+  result: VoxelizeResult
   name: string
   placement: PlacedCargo
 
-  constructor(instanceId: number, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, name: string, placement: PlacedCargo) {
+  constructor(instanceId: number, result: VoxelizeResult, name: string, placement: PlacedCargo) {
     this.instanceId = instanceId
-    this.x0 = x0
-    this.y0 = y0
-    this.z0 = z0
-    this.x1 = x1
-    this.y1 = y1
-    this.z1 = z1
+    this.result = result
     this.name = name
     this.placement = placement
   }
 
   execute(grid: VoxelGrid): boolean {
-    grid.fillBox(this.x0, this.y0, this.z0, this.x1, this.y1, this.z1, 0)
+    fillFromResult(grid, this.result, 0)
     return true
   }
 
   undo(grid: VoxelGrid): void {
-    grid.fillBox(this.x0, this.y0, this.z0, this.x1, this.y1, this.z1, this.instanceId)
+    fillFromResult(grid, this.result, this.instanceId)
   }
 
   getDescription(): string {
@@ -84,58 +75,77 @@ export class RemoveCommand implements Command {
 
 export class MoveCommand implements Command {
   instanceId: number
-  oldX0: number
-  oldY0: number
-  oldZ0: number
-  oldX1: number
-  oldY1: number
-  oldZ1: number
-  newX0: number
-  newY0: number
-  newZ0: number
-  newX1: number
-  newY1: number
-  newZ1: number
+  oldResult: VoxelizeResult
+  newResult: VoxelizeResult
   name: string
   placement: PlacedCargo
+  oldPlacement: PlacedCargo
 
   constructor(
     instanceId: number,
-    oldX0: number, oldY0: number, oldZ0: number, oldX1: number, oldY1: number, oldZ1: number,
-    newX0: number, newY0: number, newZ0: number, newX1: number, newY1: number, newZ1: number,
+    oldResult: VoxelizeResult, newResult: VoxelizeResult,
     name: string,
-    placement: PlacedCargo,
+    placement: PlacedCargo, oldPlacement: PlacedCargo,
   ) {
     this.instanceId = instanceId
-    this.oldX0 = oldX0
-    this.oldY0 = oldY0
-    this.oldZ0 = oldZ0
-    this.oldX1 = oldX1
-    this.oldY1 = oldY1
-    this.oldZ1 = oldZ1
-    this.newX0 = newX0
-    this.newY0 = newY0
-    this.newZ0 = newZ0
-    this.newX1 = newX1
-    this.newY1 = newY1
-    this.newZ1 = newZ1
+    this.oldResult = oldResult
+    this.newResult = newResult
     this.name = name
     this.placement = placement
+    this.oldPlacement = oldPlacement
   }
 
   execute(grid: VoxelGrid): boolean {
-    grid.fillBox(this.oldX0, this.oldY0, this.oldZ0, this.oldX1, this.oldY1, this.oldZ1, 0)
-    grid.fillBox(this.newX0, this.newY0, this.newZ0, this.newX1, this.newY1, this.newZ1, this.instanceId)
+    fillFromResult(grid, this.oldResult, 0)
+    fillFromResult(grid, this.newResult, this.instanceId)
     return true
   }
 
   undo(grid: VoxelGrid): void {
-    grid.fillBox(this.newX0, this.newY0, this.newZ0, this.newX1, this.newY1, this.newZ1, 0)
-    grid.fillBox(this.oldX0, this.oldY0, this.oldZ0, this.oldX1, this.oldY1, this.oldZ1, this.instanceId)
+    fillFromResult(grid, this.newResult, 0)
+    fillFromResult(grid, this.oldResult, this.instanceId)
   }
 
   getDescription(): string {
     return `Move ${this.name}`
+  }
+}
+
+export class RotateCommand implements Command {
+  instanceId: number
+  oldResult: VoxelizeResult
+  newResult: VoxelizeResult
+  name: string
+  placement: PlacedCargo
+  oldPlacement: PlacedCargo
+
+  constructor(
+    instanceId: number,
+    oldResult: VoxelizeResult, newResult: VoxelizeResult,
+    name: string,
+    placement: PlacedCargo, oldPlacement: PlacedCargo,
+  ) {
+    this.instanceId = instanceId
+    this.oldResult = oldResult
+    this.newResult = newResult
+    this.name = name
+    this.placement = placement
+    this.oldPlacement = oldPlacement
+  }
+
+  execute(grid: VoxelGrid): boolean {
+    fillFromResult(grid, this.oldResult, 0)
+    fillFromResult(grid, this.newResult, this.instanceId)
+    return true
+  }
+
+  undo(grid: VoxelGrid): void {
+    fillFromResult(grid, this.newResult, 0)
+    fillFromResult(grid, this.oldResult, this.instanceId)
+  }
+
+  getDescription(): string {
+    return `Rotate ${this.name}`
   }
 }
 
