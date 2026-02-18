@@ -61,9 +61,7 @@ Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述し
 ### 既知の制限事項（次Phase以降で修正必要）
 
 **undo/redo (`src/state/store.ts` undo/redo アクション)**:
-- undo は動作する（VoxelGrid の状態は正しく戻る）
-- redo で PlaceCommand が再実行された場合、placements 配列にエントリが復元されない。grid 上はボクセルが埋まるが store の placements には反映されないため 3D 描画に出ない
-- 修正方針: HistoryManager に PlacedCargo 情報を保持させ、redo 時に placements を復元する。または placements 自体を Command に含める
+- ~~redo バグ: 修正済み。PlaceCommand/RemoveCommand/MoveCommand に placement 情報を保持し、redo 時に placements を正しく復元するようになった~~
 
 **auto-placement (`src/ui/CargoList.tsx` findPlacementPosition)**:
 - サイドバーの「配置」ボタン経由の自動配置は VoxelGrid の hasCollision ではなく AABB ボックス同士の比較で簡易実装
@@ -113,12 +111,10 @@ Phase 1-2 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述し
 
 | コンポーネント | 設計書 | 対応Phase |
 |--------------|--------|----------|
-| `PlacementControls` | `docs/05-ui-components.md` | Phase 2 |
 | `StatsPanel` | `docs/05-ui-components.md` | Phase 4 |
 | `ViewButtons` | `docs/05-ui-components.md` | Phase 3 |
-| `ToolBar` | `docs/05-ui-components.md` | Phase 2 |
 
-実装済み (Phase 2): ~~`ErrorBoundary`~~ (`src/ui/ErrorBoundary.tsx`), ~~`WebGPUFallback`~~ (`src/ui/WebGPUFallback.tsx`)
+実装済み (Phase 2): ~~`ErrorBoundary`~~ (`src/ui/ErrorBoundary.tsx`), ~~`WebGPUFallback`~~ (`src/ui/WebGPUFallback.tsx`), ~~`PlacementControls`~~ (`src/ui/PlacementControls.tsx`), ~~`ToolBar`~~ (`src/ui/ToolBar.tsx`), `HelpOverlay` (`src/ui/HelpOverlay.tsx`)
 
 ### Phase 2 で追加された主要機能
 

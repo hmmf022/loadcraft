@@ -1,6 +1,7 @@
 import { ContainerSelector } from './ContainerSelector'
 import { CargoEditor } from './CargoEditor'
 import { CargoList } from './CargoList'
+import { PlacementControls } from './PlacementControls'
 import styles from './Sidebar.module.css'
 
 export function Sidebar() {
@@ -21,6 +22,10 @@ export function Sidebar() {
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>貨物一覧</h2>
           <CargoList />
+        </section>
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>配置操作</h2>
+          <PlacementControls />
         </section>
       </div>
     </aside>

@@ -1,0 +1,31 @@
+.overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 8px 10px;
+  background: rgba(30, 30, 30, 0.75);
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 10;
+  backdrop-filter: blur(8px);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+
+.key {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+}

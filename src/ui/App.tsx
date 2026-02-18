@@ -3,6 +3,8 @@ import { Sidebar } from './Sidebar'
 import { CanvasPanel } from './CanvasPanel'
 import { ErrorBoundary } from './ErrorBoundary'
 import { WebGPUFallback } from './WebGPUFallback'
+import { ToolBar } from './ToolBar'
+import { HelpOverlay } from './HelpOverlay'
 import { useAppStore } from '../state/store'
 import styles from './App.module.css'
 
@@ -42,6 +44,8 @@ export function App() {
         <ErrorBoundary fallback={<WebGPUFallback />}>
           <CanvasPanel />
         </ErrorBoundary>
+        <ToolBar />
+        <HelpOverlay />
       </div>
     </div>
   )

@@ -1,0 +1,42 @@
+.toolbar {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(30, 30, 30, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  backdrop-filter: blur(8px);
+  z-index: 10;
+}
+
+.separator {
+  width: 1px;
+  background: var(--border);
+  margin: 2px 2px;
+}
+
+.button {
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+}
+
+.button:disabled {
+  color: var(--text-secondary);
+  opacity: 0.4;
+  cursor: default;
+}
