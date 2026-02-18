@@ -12,7 +12,10 @@ export function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === 'z') {
+      if (e.ctrlKey && e.shiftKey && e.key === 'z') {
+        e.preventDefault()
+        useAppStore.getState().redo()
+      } else if (e.ctrlKey && e.key === 'z') {
         e.preventDefault()
         useAppStore.getState().undo()
       } else if (e.ctrlKey && e.key === 'y') {
