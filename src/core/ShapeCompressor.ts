@@ -131,7 +131,7 @@ export function expandBlocks(shapeBlocks: ShapeBlock[], gridSize: number): Map<s
           const y = baseY + dy
           const z = baseZ + dz
           const key = blockKey(x, y, z)
-          cells.set(key, { x, y, z, color: block.color })
+          cells.set(key, { x, y, z, w: 1, h: 1, d: 1, color: block.color })
         }
       }
     }

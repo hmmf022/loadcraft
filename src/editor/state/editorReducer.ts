@@ -1,19 +1,25 @@
 import type { EditorState, EditorAction } from './types'
-import { blockKey } from './types'
+import { blockKey, blocksOverlap } from './types'
 
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case 'PLACE_BLOCK': {
-      const { x, y, z, color } = action
-      if (x < 0 || y < 0 || z < 0 || x >= state.maxCells || y >= state.maxCells || z >= state.maxCells) {
+      const { x, y, z, w, h, d, color } = action
+      // Boundary check
+      if (x < 0 || y < 0 || z < 0 ||
+          x + w > state.maxCells || y + h > state.maxCells || z + d > state.maxCells) {
         return state
       }
-      const key = blockKey(x, y, z)
-      if (state.blocks.has(key)) {
-        return state // already occupied
+      const newBlock = { x, y, z, w, h, d, color }
+      // Overlap check against all existing blocks
+      for (const existing of state.blocks.values()) {
+        if (blocksOverlap(newBlock, existing)) {
+          return state
+        }
       }
+      const key = blockKey(x, y, z)
       const newBlocks = new Map(state.blocks)
-      newBlocks.set(key, { x, y, z, color })
+      newBlocks.set(key, newBlock)
       return { ...state, blocks: newBlocks }
     }
 
@@ -49,6 +55,9 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
 
     case 'SET_WEIGHT':
       return { ...state, weightKg: action.weight }
+
+    case 'SET_BRUSH_SIZE':
+      return { ...state, brushW: action.w, brushH: action.h, brushD: action.d }
 
     case 'SET_GHOST':
       return { ...state, ghostPosition: action.position }

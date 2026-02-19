@@ -6,7 +6,7 @@ import { blockKey } from '../../editor/state/types'
 function makeBlocks(coords: [number, number, number, string][]): Map<string, EditorBlock> {
   const m = new Map<string, EditorBlock>()
   for (const [x, y, z, color] of coords) {
-    m.set(blockKey(x, y, z), { x, y, z, color })
+    m.set(blockKey(x, y, z), { x, y, z, w: 1, h: 1, d: 1, color })
   }
   return m
 }
@@ -66,7 +66,7 @@ describe('expandBlocks', () => {
     const cells = expandBlocks(blocks, 10)
     expect(cells.size).toBe(1)
     const cell = cells.get('0,0,0')
-    expect(cell).toEqual({ x: 0, y: 0, z: 0, color: '#ff0000' })
+    expect(cell).toEqual({ x: 0, y: 0, z: 0, w: 1, h: 1, d: 1, color: '#ff0000' })
   })
 
   it('expands a 2x1x1 block into 2 cells', () => {

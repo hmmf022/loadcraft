@@ -1,4 +1,3 @@
-import { DISPLAY_SCALE } from '../state/types'
 import type { EditorState, EditorAction } from '../state/types'
 import styles from './ShapeInfoPanel.module.css'
 
@@ -17,9 +16,9 @@ function computeBoundingBox(state: EditorState): { w: number; h: number; d: numb
     if (block.x < minX) minX = block.x
     if (block.y < minY) minY = block.y
     if (block.z < minZ) minZ = block.z
-    if (block.x + 1 > maxX) maxX = block.x + 1
-    if (block.y + 1 > maxY) maxY = block.y + 1
-    if (block.z + 1 > maxZ) maxZ = block.z + 1
+    if (block.x + block.w > maxX) maxX = block.x + block.w
+    if (block.y + block.h > maxY) maxY = block.y + block.h
+    if (block.z + block.d > maxZ) maxZ = block.z + block.d
   }
 
   const gs = state.gridSize
@@ -30,8 +29,24 @@ function computeBoundingBox(state: EditorState): { w: number; h: number; d: numb
   }
 }
 
+function clampBrush(v: number): number {
+  return Math.max(1, Math.min(300, Math.round(v)))
+}
+
 export function ShapeInfoPanel({ state, dispatch }: Props) {
   const bbox = computeBoundingBox(state)
+
+  const setBrush = (axis: 'w' | 'h' | 'd', value: string) => {
+    const v = parseInt(value, 10)
+    if (isNaN(v)) return
+    const clamped = clampBrush(v)
+    dispatch({
+      type: 'SET_BRUSH_SIZE',
+      w: axis === 'w' ? clamped : state.brushW,
+      h: axis === 'h' ? clamped : state.brushH,
+      d: axis === 'd' ? clamped : state.brushD,
+    })
+  }
 
   return (
     <div className={styles.container}>
@@ -64,6 +79,47 @@ export function ShapeInfoPanel({ state, dispatch }: Props) {
         />
       </label>
 
+      <div className={styles.field}>
+        <span className={styles.label}>Brush Size (cm)</span>
+        <div className={styles.brushInputs}>
+          <label className={styles.brushField}>
+            W
+            <input
+              type="number"
+              value={state.brushW}
+              min={1}
+              max={300}
+              onChange={(e) => setBrush('w', e.target.value)}
+              className={styles.brushInput}
+            />
+          </label>
+          <span className={styles.brushSep}>x</span>
+          <label className={styles.brushField}>
+            H
+            <input
+              type="number"
+              value={state.brushH}
+              min={1}
+              max={300}
+              onChange={(e) => setBrush('h', e.target.value)}
+              className={styles.brushInput}
+            />
+          </label>
+          <span className={styles.brushSep}>x</span>
+          <label className={styles.brushField}>
+            D
+            <input
+              type="number"
+              value={state.brushD}
+              min={1}
+              max={300}
+              onChange={(e) => setBrush('d', e.target.value)}
+              className={styles.brushInput}
+            />
+          </label>
+        </div>
+      </div>
+
       <div className={styles.info}>
         <div className={styles.infoRow}>
           <span className={styles.infoLabel}>Blocks</span>
@@ -73,12 +129,6 @@ export function ShapeInfoPanel({ state, dispatch }: Props) {
           <span className={styles.infoLabel}>BBox (cm)</span>
           <span className={styles.infoValue}>
             {bbox.w} x {bbox.h} x {bbox.d}
-          </span>
-        </div>
-        <div className={styles.infoRow}>
-          <span className={styles.infoLabel}>Grid</span>
-          <span className={styles.infoValue}>
-            {DISPLAY_SCALE}x display (1 cell = 1cm)
           </span>
         </div>
       </div>

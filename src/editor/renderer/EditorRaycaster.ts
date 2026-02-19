@@ -34,7 +34,7 @@ export function pickBlock(
     const gs = gridSize
     const aabb: AABB = {
       min: { x: block.x * gs, y: block.y * gs, z: block.z * gs },
-      max: { x: (block.x + 1) * gs, y: (block.y + 1) * gs, z: (block.z + 1) * gs },
+      max: { x: (block.x + block.w) * gs, y: (block.y + block.h) * gs, z: (block.z + block.d) * gs },
     }
 
     const hit = intersectRayAABBWithFace(ray, aabb)
@@ -46,17 +46,12 @@ export function pickBlock(
   if (!closest) return null
 
   const { key, hit, block } = closest
-  const adjacentCell = {
-    x: block.x + hit.faceNormal.x,
-    y: block.y + hit.faceNormal.y,
-    z: block.z + hit.faceNormal.z,
-  }
 
   return {
     blockKey: key,
     distance: hit.distance,
     faceNormal: hit.faceNormal,
-    adjacentCell,
+    adjacentCell: { x: block.x, y: block.y, z: block.z },
     hitCell: { x: block.x, y: block.y, z: block.z },
   }
 }
@@ -93,19 +88,58 @@ export function getPlacementTarget(
   blocks: Map<string, EditorBlock>,
   gridSize: number,
   maxCells: number,
+  newBlockSize?: { w: number; h: number; d: number },
 ): { x: number; y: number; z: number } | null {
+  const nw = newBlockSize?.w ?? 1
+  const nh = newBlockSize?.h ?? 1
+  const nd = newBlockSize?.d ?? 1
+
   // Try block pick first
   const blockResult = pickBlock(screenX, screenY, canvasW, canvasH, inverseViewProj, blocks, gridSize)
   if (blockResult) {
-    const { x, y, z } = blockResult.adjacentCell
-    // Bounds check for adjacent cell
-    if (x >= 0 && y >= 0 && z >= 0 && x < maxCells && y < maxCells && z < maxCells) {
+    const hitBlock = blocks.get(blockResult.blockKey)!
+    const n = blockResult.faceNormal
+
+    let x: number, y: number, z: number
+    if (n.x === 1) {
+      x = hitBlock.x + hitBlock.w
+      y = hitBlock.y
+      z = hitBlock.z
+    } else if (n.x === -1) {
+      x = hitBlock.x - nw
+      y = hitBlock.y
+      z = hitBlock.z
+    } else if (n.y === 1) {
+      x = hitBlock.x
+      y = hitBlock.y + hitBlock.h
+      z = hitBlock.z
+    } else if (n.y === -1) {
+      x = hitBlock.x
+      y = hitBlock.y - nh
+      z = hitBlock.z
+    } else if (n.z === 1) {
+      x = hitBlock.x
+      y = hitBlock.y
+      z = hitBlock.z + hitBlock.d
+    } else {
+      x = hitBlock.x
+      y = hitBlock.y
+      z = hitBlock.z - nd
+    }
+
+    // Bounds check for new block
+    if (x >= 0 && y >= 0 && z >= 0 &&
+        x + nw <= maxCells && y + nh <= maxCells && z + nd <= maxCells) {
       return { x, y, z }
     }
   }
 
   // Fall back to floor pick
-  return pickFloor(screenX, screenY, canvasW, canvasH, inverseViewProj, gridSize, maxCells)
+  const floor = pickFloor(screenX, screenY, canvasW, canvasH, inverseViewProj, gridSize, maxCells)
+  if (floor && floor.x + nw <= maxCells && floor.z + nd <= maxCells) {
+    return floor
+  }
+  return null
 }
 
 /** Get the target cell for erase/paint: returns the hit block's cell */

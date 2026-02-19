@@ -64,3 +64,38 @@
   color: var(--text-primary);
   font-family: monospace;
 }
+
+.brushInputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.brushField {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.brushInput {
+  width: 48px;
+  padding: 4px 6px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.brushInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.brushSep {
+  font-size: 11px;
+  color: var(--text-secondary);
+}

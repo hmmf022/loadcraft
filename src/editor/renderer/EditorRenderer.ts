@@ -205,9 +205,12 @@ export class EditorRenderer {
 
     let i = 0
     for (const block of blocks.values()) {
-      // Model matrix: T(x*gs + gs/2, y*gs + gs/2, z*gs + gs/2) * S(gs, gs, gs)
-      const t = mat4Translation(block.x * gs + gs / 2, block.y * gs + gs / 2, block.z * gs + gs / 2)
-      const s = mat4Scaling(gs, gs, gs)
+      const bw = block.w * gs
+      const bh = block.h * gs
+      const bd = block.d * gs
+      // Model matrix: T(x*gs + bw/2, y*gs + bh/2, z*gs + bd/2) * S(bw, bh, bd)
+      const t = mat4Translation(block.x * gs + bw / 2, block.y * gs + bh / 2, block.z * gs + bd / 2)
+      const s = mat4Scaling(bw, bh, bd)
       const modelMatrix = mat4Multiply(t, s)
 
       const offset = i * 20
@@ -241,6 +244,7 @@ export class EditorRenderer {
     gridSize: number,
     color: string,
     validity: 'valid' | 'invalid',
+    size?: { w: number; h: number; d: number },
   ): void {
     if (!position) {
       this.ghostVisible = false
@@ -251,8 +255,11 @@ export class EditorRenderer {
     const gs = gridSize
     const data = new Float32Array(20)
 
-    const t = mat4Translation(position.x * gs + gs / 2, position.y * gs + gs / 2, position.z * gs + gs / 2)
-    const s = mat4Scaling(gs, gs, gs)
+    const bw = (size?.w ?? 1) * gs
+    const bh = (size?.h ?? 1) * gs
+    const bd = (size?.d ?? 1) * gs
+    const t = mat4Translation(position.x * gs + bw / 2, position.y * gs + bh / 2, position.z * gs + bd / 2)
+    const s = mat4Scaling(bw, bh, bd)
     const modelMatrix = mat4Multiply(t, s)
     data.set(modelMatrix, 0)
 

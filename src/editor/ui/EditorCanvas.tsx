@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useState, useInsertionEffect } from 'react'
 import { EditorRenderer } from '../renderer/EditorRenderer'
 import { getPlacementTarget, getBlockTarget } from '../renderer/EditorRaycaster'
-import { blockKey, DISPLAY_SCALE } from '../state/types'
+import { DISPLAY_SCALE, blocksOverlap } from '../state/types'
 import type { EditorState, EditorAction } from '../state/types'
 import styles from './EditorCanvas.module.css'
 
@@ -41,12 +41,13 @@ export function EditorCanvas({ state, dispatch }: Props) {
     const invVP = renderer.camera.getInverseViewProjMatrix()
 
     if (s.currentTool === 'place') {
+      const brushSize = { w: s.brushW, h: s.brushH, d: s.brushD }
       const target = getPlacementTarget(
         screenX, screenY, canvas.width, canvas.height, invVP,
-        s.blocks, DISPLAY_SCALE, s.maxCells,
+        s.blocks, DISPLAY_SCALE, s.maxCells, brushSize,
       )
       if (target) {
-        dispatchRef.current({ type: 'PLACE_BLOCK', ...target, color: s.currentColor })
+        dispatchRef.current({ type: 'PLACE_BLOCK', ...target, ...brushSize, color: s.currentColor })
       }
     } else if (s.currentTool === 'erase') {
       const target = getBlockTarget(
@@ -76,16 +77,24 @@ export function EditorCanvas({ state, dispatch }: Props) {
     const invVP = renderer.camera.getInverseViewProjMatrix()
 
     if (s.currentTool === 'place') {
+      const brushSize = { w: s.brushW, h: s.brushH, d: s.brushD }
       const target = getPlacementTarget(
         screenX, screenY, canvas.width, canvas.height, invVP,
-        s.blocks, DISPLAY_SCALE, s.maxCells,
+        s.blocks, DISPLAY_SCALE, s.maxCells, brushSize,
       )
       if (target) {
-        const key = blockKey(target.x, target.y, target.z)
-        const occupied = s.blocks.has(key)
+        const candidate = { x: target.x, y: target.y, z: target.z, ...brushSize, color: '' }
+        let occupied = false
+        for (const existing of s.blocks.values()) {
+          if (blocksOverlap(candidate, existing)) {
+            occupied = true
+            break
+          }
+        }
         renderer.updateGhostBlock(
           target, DISPLAY_SCALE, s.currentColor,
           occupied ? 'invalid' : 'valid',
+          brushSize,
         )
       } else {
         renderer.updateGhostBlock(null, DISPLAY_SCALE, s.currentColor, 'valid')
