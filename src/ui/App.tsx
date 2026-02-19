@@ -6,10 +6,15 @@ import { WebGPUFallback } from './WebGPUFallback'
 import { ToolBar } from './ToolBar'
 import { HelpOverlay } from './HelpOverlay'
 import { ViewButtons } from './ViewButtons'
+import { Toast } from './Toast'
 import { useAppStore } from '../state/store'
 import styles from './App.module.css'
+import sidebarStyles from './Sidebar.module.css'
 
 export function App() {
+  const sidebarOpen = useAppStore((s) => s.sidebarOpen)
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar)
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -33,6 +38,11 @@ export function App() {
           useAppStore.getState().removePlacement(selected)
         }
       } else if (e.key === 'Escape') {
+        // Close sidebar on mobile if open
+        if (useAppStore.getState().sidebarOpen) {
+          useAppStore.getState().toggleSidebar()
+          return
+        }
         useAppStore.getState().setSelectedInstanceId(null)
         useAppStore.getState().setDragState(null)
       } else if (!isTextInput && !e.ctrlKey && !e.altKey && !e.metaKey) {
@@ -93,7 +103,14 @@ export function App() {
 
   return (
     <div className={styles.appLayout}>
-      <Sidebar />
+      <button className={styles.menuButton} onClick={toggleSidebar}>
+        &#9776;
+      </button>
+      <div
+        className={`${styles.backdrop} ${sidebarOpen ? styles.backdropVisible : ''}`}
+        onClick={toggleSidebar}
+      />
+      <Sidebar className={sidebarOpen ? sidebarStyles.open : ''} />
       <div className={styles.canvasArea}>
         <ErrorBoundary fallback={<WebGPUFallback />}>
           <CanvasPanel />
@@ -102,6 +119,7 @@ export function App() {
         <HelpOverlay />
         <ViewButtons />
       </div>
+      <Toast />
     </div>
   )
 }

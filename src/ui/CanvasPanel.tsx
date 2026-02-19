@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useState } from 'react'
 import { Renderer } from '../renderer/Renderer'
 import { useAppStore } from '../state/store'
 import { pick, screenToRay, intersectRayPlane } from '../renderer/Raycaster'
@@ -62,6 +62,32 @@ function isValidPosition(pos: Vec3, widthCm: number, heightCm: number, depthCm: 
   } else {
     return !grid.hasCollision(result.voxels, excludeInstanceId)
   }
+}
+
+/** Determine ghost validity: 'invalid' if collision, 'floating' if unsupported, 'valid' otherwise */
+function getGhostValidity(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): 'valid' | 'invalid' | 'floating' {
+  if (!isValidPosition(pos, widthCm, heightCm, depthCm, rotationDeg, excludeInstanceId)) {
+    return 'invalid'
+  }
+  const aabb = computeRotatedAABB(widthCm, heightCm, depthCm, pos, rotationDeg)
+  if (aabb.min.y === 0) return 'valid' // on floor
+
+  // Check if there's support below the bottom voxels
+  const grid = getVoxelGrid()
+  let totalBottom = 0
+  let supportedBottom = 0
+  for (let z = aabb.min.z; z < aabb.max.z; z++) {
+    for (let x = aabb.min.x; x < aabb.max.x; x++) {
+      // Check if this is a bottom voxel of the object
+      const below = grid.get(x, aabb.min.y - 1, z)
+      if (below !== 0 && below !== excludeInstanceId) {
+        supportedBottom++
+      }
+      totalBottom++
+    }
+  }
+  if (totalBottom === 0) return 'floating'
+  return (supportedBottom / totalBottom) >= 0.8 ? 'valid' : 'floating'
 }
 
 /**
@@ -137,6 +163,7 @@ export function CanvasPanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<Renderer | null>(null)
+  const [loading, setLoading] = useState(true)
 
   // Track which instanceId is being moved (for clearing from grid)
   const movingInstanceRef = useRef<number | null>(null)
@@ -187,8 +214,8 @@ export function CanvasPanel() {
     // Show ghost at current position
     const pos = placement.positionCm
     const rot = placement.rotationDeg
-    const valid = isValidPosition(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId)
-    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, valid, rot)
+    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId)
+    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, rot)
   }, [])
 
   const handleMove = useCallback((screenX: number, screenY: number) => {
@@ -213,8 +240,8 @@ export function CanvasPanel() {
     if (!floorHit) return
 
     const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
-    const valid = isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
-    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, valid, rot)
+    const validity = getGhostValidity(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
+    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, validity, rot)
   }, [])
 
   const handleMoveEnd = useCallback((screenX: number, screenY: number) => {
@@ -232,7 +259,7 @@ export function CanvasPanel() {
     if (!placement) {
       movingInstanceRef.current = null
       moveOrigPosRef.current = null
-      renderer.updateGhost(null, 0, 0, 0, false)
+      renderer.updateGhost(null, 0, 0, 0, 'invalid')
       return
     }
     const def = store.cargoDefs.find((d) => d.id === placement.cargoDefId)
@@ -245,7 +272,7 @@ export function CanvasPanel() {
       grid.fillBox(x0, y0, z0, x0 + 1, y0 + 1, z0 + 1, movingId)
       movingInstanceRef.current = null
       moveOrigPosRef.current = null
-      renderer.updateGhost(null, 0, 0, 0, false)
+      renderer.updateGhost(null, 0, 0, 0, 'invalid')
       return
     }
 
@@ -278,7 +305,7 @@ export function CanvasPanel() {
 
     movingInstanceRef.current = null
     moveOrigPosRef.current = null
-    renderer.updateGhost(null, 0, 0, 0, false)
+    renderer.updateGhost(null, 0, 0, 0, 'invalid')
   }, [])
 
   useEffect(() => {
@@ -292,8 +319,14 @@ export function CanvasPanel() {
       const renderer = new Renderer()
       await renderer.init(canvas)
       if (disposed) { renderer.dispose(); return }
+      setLoading(false)
 
       rendererRef.current = renderer
+
+      // Initialize label renderer
+      if (containerRef.current) {
+        renderer.initLabels(containerRef.current)
+      }
 
       // Set up click and move callbacks
       renderer.cameraController.onClick = handleClick
@@ -301,8 +334,9 @@ export function CanvasPanel() {
       renderer.cameraController.onMove = handleMove
       renderer.cameraController.onMoveEnd = handleMoveEnd
 
-      // Reset cameraView to 'free' when user orbits
+      // Reset cameraView to 'free' when user orbits, cancel any transition
       renderer.cameraController.onOrbitStart = () => {
+        renderer.cancelTransition()
         useAppStore.getState().setCameraView('free')
       }
 
@@ -349,6 +383,9 @@ export function CanvasPanel() {
 
           // Sync showGrid
           renderer.showGrid = state.showGrid
+
+          // Update labels
+          renderer.updateLabels(state.placements, state.cargoDefs)
         }
 
         // Update selection highlight even if renderVersion didn't change
@@ -361,17 +398,27 @@ export function CanvasPanel() {
           renderer.cameraController.setMoveEnabled(hasSelection)
         }
 
-        // Camera view change
+        // Camera view change — animate to preset
         if (state.cameraView !== prevState.cameraView && state.cameraView !== 'free') {
           const preset = CAMERA_PRESETS[state.cameraView]
           if (preset) {
-            renderer.camera.setState({ theta: preset.theta, phi: preset.phi })
+            renderer.animateToPreset(preset.theta, preset.phi)
           }
         }
 
         // showGrid change (even if renderVersion didn't change, e.g. toggle only)
         if (state.showGrid !== prevState.showGrid) {
           renderer.showGrid = state.showGrid
+        }
+
+        // showLabels change
+        if (state.showLabels !== prevState.showLabels) {
+          renderer.showLabels = state.showLabels
+          if (state.showLabels) {
+            renderer.updateLabels(state.placements, state.cargoDefs)
+          } else {
+            renderer.updateLabels([], [])
+          }
         }
       })
 
@@ -439,21 +486,21 @@ export function CanvasPanel() {
 
     const def = store.cargoDefs.find((d) => d.id === dragState.cargoDefId)
     if (!def || !floorHit) {
-      renderer.updateGhost(null, 0, 0, 0, false)
+      renderer.updateGhost(null, 0, 0, 0, 'invalid')
       return
     }
 
     const rot = dragState.currentRotation
     const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot)
-    const valid = isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
-    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, valid, rot)
-    store.setDragState({ ...dragState, currentPosition: snapped, isValid: valid })
+    const validity = getGhostValidity(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
+    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, validity, rot)
+    store.setDragState({ ...dragState, currentPosition: snapped, isValid: validity !== 'invalid' })
   }, [])
 
   const handleDragLeave = useCallback(() => {
     const renderer = rendererRef.current
     if (renderer) {
-      renderer.updateGhost(null, 0, 0, 0, false)
+      renderer.updateGhost(null, 0, 0, 0, 'invalid')
     }
     useAppStore.getState().setDragState(null)
   }, [])
@@ -490,7 +537,7 @@ export function CanvasPanel() {
       }
     }
 
-    renderer.updateGhost(null, 0, 0, 0, false)
+    renderer.updateGhost(null, 0, 0, 0, 'invalid')
     store.setDragState(null)
   }, [])
 
@@ -503,6 +550,11 @@ export function CanvasPanel() {
       onDrop={handleDrop}
     >
       <canvas ref={canvasRef} className={styles.canvas} />
+      {loading && (
+        <div className={styles.spinnerOverlay}>
+          <div className={styles.spinner} />
+        </div>
+      )}
     </div>
   )
 }

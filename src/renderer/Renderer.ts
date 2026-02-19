@@ -1,10 +1,13 @@
 import { OrbitCamera, CAMERA_UNIFORM_SIZE } from './Camera'
 import { CameraController } from './CameraController'
+import { ViewTransition } from './ViewTransition'
+import { LabelRenderer } from './LabelRenderer'
 import { createCargoPipeline, createGhostPipeline, INSTANCE_BYTE_SIZE } from './pipelines/CargoPipeline'
 import { createContainerPipelines } from './pipelines/ContainerPipeline'
 import { createGridPipeline } from './pipelines/GridPipeline'
 import { mat4Translation, mat4Scaling, mat4Multiply, mat4Identity, mat4RotationX, mat4RotationY, mat4RotationZ } from '../utils/math'
 import type { PlacedCargo, CargoItemDef, Vec3 } from '../core/types'
+import { computeRotatedAABB } from '../core/Voxelizer'
 
 const DEG_TO_RAD = Math.PI / 180
 
@@ -96,8 +99,16 @@ export class Renderer {
   // Grid visibility
   showGrid = true
 
+  // View transition
+  private viewTransition: ViewTransition
+
+  // Labels
+  private labelRenderer: LabelRenderer | null = null
+  showLabels = true
+
   constructor() {
     this.camera = new OrbitCamera()
+    this.viewTransition = new ViewTransition(this.camera)
   }
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
@@ -275,7 +286,7 @@ export class Renderer {
     })
   }
 
-  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, isValid: boolean, rotationDeg?: Vec3): void {
+  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, validity: 'valid' | 'invalid' | 'floating', rotationDeg?: Vec3): void {
     if (!position) {
       this.ghostVisible = false
       return
@@ -288,10 +299,12 @@ export class Renderer {
     const modelMatrix = buildModelMatrix(position, rot, widthCm, heightCm, depthCm)
     data.set(modelMatrix, 0)
 
-    if (isValid) {
-      data[16] = 0.3; data[17] = 0.8; data[18] = 0.3; data[19] = 0.4 // green, semi-transparent
+    if (validity === 'valid') {
+      data[16] = 0.3; data[17] = 0.8; data[18] = 0.3; data[19] = 0.4 // green
+    } else if (validity === 'floating') {
+      data[16] = 0.9; data[17] = 0.8; data[18] = 0.2; data[19] = 0.4 // yellow
     } else {
-      data[16] = 0.9; data[17] = 0.2; data[18] = 0.2; data[19] = 0.4 // red, semi-transparent
+      data[16] = 0.9; data[17] = 0.2; data[18] = 0.2; data[19] = 0.4 // red
     }
 
     if (this.ghostBuffer) {
@@ -345,8 +358,49 @@ export class Renderer {
     this.camera.setAspect(width / height)
   }
 
+  animateToPreset(theta: number, phi: number): void {
+    this.viewTransition.transitionTo(theta, phi)
+  }
+
+  cancelTransition(): void {
+    this.viewTransition.cancel()
+  }
+
+  initLabels(parentElement: HTMLElement): void {
+    this.labelRenderer = new LabelRenderer(parentElement)
+  }
+
+  updateLabels(placements: PlacedCargo[], cargoDefs: CargoItemDef[]): void {
+    if (!this.labelRenderer) return
+
+    const defMap = new Map<string, CargoItemDef>()
+    for (const def of cargoDefs) {
+      defMap.set(def.id, def)
+    }
+
+    const labels = []
+    for (const p of placements) {
+      const def = defMap.get(p.cargoDefId)
+      if (!def) continue
+      const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
+      labels.push({
+        instanceId: p.instanceId,
+        text: `${def.name} ${def.widthCm}x${def.heightCm}x${def.depthCm} ${def.weightKg}kg`,
+        worldPosition: {
+          x: (aabb.min.x + aabb.max.x) / 2,
+          y: aabb.max.y,
+          z: (aabb.min.z + aabb.max.z) / 2,
+        },
+      })
+    }
+    this.labelRenderer.updateLabels(labels)
+  }
+
   private render = (): void => {
     if (this.disposed) return
+
+    // Update view transition
+    this.viewTransition.update()
 
     // Update camera uniform
     const cameraData = this.camera.getUniformData()
@@ -454,6 +508,15 @@ export class Renderer {
 
     this.device.queue.submit([commandEncoder.finish()])
 
+    // Project labels onto screen
+    if (this.labelRenderer && this.showLabels) {
+      const vpData = this.camera.getUniformData()
+      const vpMatrix = vpData.subarray(0, 16) // viewProjMatrix is first 16 floats
+      const camPos = { x: vpData[48]!, y: vpData[49]!, z: vpData[50]! }
+      const dpr = window.devicePixelRatio || 1
+      this.labelRenderer.project(vpMatrix, camPos, this.canvas.width, this.canvas.height, dpr)
+    }
+
     this.animationId = requestAnimationFrame(this.render)
   }
 
@@ -470,6 +533,7 @@ export class Renderer {
     this.disposed = true
     this.stopRenderLoop()
     this.cameraController?.dispose()
+    this.labelRenderer?.dispose()
     this.cameraUniformBuffer?.destroy()
     this.cargoVertexBuffer?.destroy()
     this.cargoIndexBuffer?.destroy()

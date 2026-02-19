@@ -27,6 +27,7 @@ export function CargoEditor() {
   const addCargoDef = useAppStore((s) => s.addCargoDef)
   const importCargoDefs = useAppStore((s) => s.importCargoDefs)
   const container = useAppStore((s) => s.container)
+  const addToast = useAppStore((s) => s.addToast)
   const importInputRef = useRef<HTMLInputElement>(null)
 
   const handleChange = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,9 +88,10 @@ export function CargoEditor() {
       const result = parseCargoFile(reader.result as string, file.name)
       if (result.defs.length > 0) {
         importCargoDefs(result.defs)
+        addToast(`${result.defs.length}件インポートしました`, 'success')
       }
       if (result.errors.length > 0) {
-        alert(`インポートエラー:\n${result.errors.join('\n')}`)
+        addToast(`インポートエラー: ${result.errors[0]}`, 'error')
       }
     }
     reader.readAsText(file)

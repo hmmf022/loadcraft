@@ -63,6 +63,19 @@ export interface AppState {
   gridSizeCm: number
   setGridSize: (size: number) => void
 
+  // Labels
+  showLabels: boolean
+  toggleLabels: () => void
+
+  // Sidebar (responsive)
+  sidebarOpen: boolean
+  toggleSidebar: () => void
+
+  // Toasts
+  toasts: { id: number; message: string; type: 'info' | 'success' | 'error' }[]
+  addToast: (message: string, type: 'info' | 'success' | 'error') => void
+  removeToast: (id: number) => void
+
   // Render version (triggers renderer updates)
   renderVersion: number
 
@@ -353,6 +366,31 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleSnap: () => set((state) => ({ snapToGrid: !state.snapToGrid })),
   gridSizeCm: 1,
   setGridSize: (size) => set({ gridSizeCm: size }),
+
+  // Labels
+  showLabels: true,
+  toggleLabels: () => set((state) => ({ showLabels: !state.showLabels })),
+
+  // Sidebar (responsive)
+  sidebarOpen: false,
+  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+
+  // Toasts
+  toasts: [],
+  addToast: (message, type) => {
+    const id = Date.now()
+    set((state) => ({
+      toasts: [...state.toasts, { id, message, type }],
+    }))
+    setTimeout(() => {
+      set((state) => ({
+        toasts: state.toasts.filter((t) => t.id !== id),
+      }))
+    }, 3000)
+  },
+  removeToast: (id) => set((state) => ({
+    toasts: state.toasts.filter((t) => t.id !== id),
+  })),
 
   // Render version
   renderVersion: 0,

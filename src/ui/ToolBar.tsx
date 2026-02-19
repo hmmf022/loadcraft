@@ -12,12 +12,15 @@ export function ToolBar() {
   const redo = useAppStore((s) => s.redo)
   const showGrid = useAppStore((s) => s.showGrid)
   const toggleGrid = useAppStore((s) => s.toggleGrid)
+  const showLabels = useAppStore((s) => s.showLabels)
+  const toggleLabels = useAppStore((s) => s.toggleLabels)
   const snapToGrid = useAppStore((s) => s.snapToGrid)
   const toggleSnap = useAppStore((s) => s.toggleSnap)
   const gridSizeCm = useAppStore((s) => s.gridSizeCm)
   const setGridSize = useAppStore((s) => s.setGridSize)
   const saveState = useAppStore((s) => s.saveState)
   const loadState = useAppStore((s) => s.loadState)
+  const addToast = useAppStore((s) => s.addToast)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -35,11 +38,12 @@ export function ToolBar() {
         const data = JSON.parse(reader.result as string)
         if (validateSaveData(data)) {
           loadState(data)
+          addToast('読み込みました', 'success')
         } else {
-          alert('無効なセーブファイルです。')
+          addToast('無効なセーブファイルです', 'error')
         }
       } catch {
-        alert('ファイルの読み込みに失敗しました。')
+        addToast('ファイルの読み込みに失敗しました', 'error')
       }
     }
     reader.readAsText(file)
@@ -57,7 +61,7 @@ export function ToolBar() {
         Redo
       </button>
       <div className={styles.separator} />
-      <button className={styles.button} onClick={saveState}>
+      <button className={styles.button} onClick={() => { saveState(); addToast('保存しました', 'success') }}>
         Save
       </button>
       <button className={styles.button} onClick={handleLoad}>
@@ -82,6 +86,12 @@ export function ToolBar() {
         onClick={toggleSnap}
       >
         Snap
+      </button>
+      <button
+        className={`${styles.button} ${showLabels ? styles.active : ''}`}
+        onClick={toggleLabels}
+      >
+        Labels
       </button>
       {snapToGrid && (
         <select

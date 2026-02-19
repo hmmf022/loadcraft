@@ -5,9 +5,13 @@ import { PlacementControls } from './PlacementControls'
 import { StatsPanel } from './StatsPanel'
 import styles from './Sidebar.module.css'
 
-export function Sidebar() {
+interface SidebarProps {
+  className?: string
+}
+
+export function Sidebar({ className }: SidebarProps) {
   return (
-    <aside className={styles.sidebar}>
+    <aside className={`${styles.sidebar} ${className ?? ''}`}>
       <div className={styles.header}>
         <h1 className={styles.title}>Container Simulator</h1>
       </div>
