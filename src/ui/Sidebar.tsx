@@ -2,6 +2,7 @@ import { ContainerSelector } from './ContainerSelector'
 import { CargoEditor } from './CargoEditor'
 import { CargoList } from './CargoList'
 import { PlacementControls } from './PlacementControls'
+import { StatsPanel } from './StatsPanel'
 import styles from './Sidebar.module.css'
 
 export function Sidebar() {
@@ -26,6 +27,10 @@ export function Sidebar() {
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>配置操作</h2>
           <PlacementControls />
+        </section>
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>統計情報</h2>
+          <StatsPanel />
         </section>
       </div>
     </aside>

@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import { useAppStore } from '../state/store'
+import { validateSaveData } from '../core/SaveLoad'
 import styles from './ToolBar.module.css'
 
 const SNAP_SIZES = [1, 5, 10]
@@ -14,6 +16,37 @@ export function ToolBar() {
   const toggleSnap = useAppStore((s) => s.toggleSnap)
   const gridSizeCm = useAppStore((s) => s.gridSizeCm)
   const setGridSize = useAppStore((s) => s.setGridSize)
+  const saveState = useAppStore((s) => s.saveState)
+  const loadState = useAppStore((s) => s.loadState)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleLoad = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result as string)
+        if (validateSaveData(data)) {
+          loadState(data)
+        } else {
+          alert('無効なセーブファイルです。')
+        }
+      } catch {
+        alert('ファイルの読み込みに失敗しました。')
+      }
+    }
+    reader.readAsText(file)
+
+    // Reset so the same file can be loaded again
+    e.target.value = ''
+  }
 
   return (
     <div className={styles.toolbar}>
@@ -24,12 +57,19 @@ export function ToolBar() {
         Redo
       </button>
       <div className={styles.separator} />
-      <button className={styles.button} disabled title="Phase 4">
+      <button className={styles.button} onClick={saveState}>
         Save
       </button>
-      <button className={styles.button} disabled title="Phase 4">
+      <button className={styles.button} onClick={handleLoad}>
         Load
       </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
+      />
       <div className={styles.separator} />
       <button
         className={`${styles.button} ${showGrid ? styles.active : ''}`}

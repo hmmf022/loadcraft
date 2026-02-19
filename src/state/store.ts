@@ -1,12 +1,27 @@
 import { create } from 'zustand'
-import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView } from '../core/types'
+import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView, WeightResult } from '../core/types'
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand } from '../core/History'
 import { voxelize } from '../core/Voxelizer'
+import { computeWeight, computeCogDeviation } from '../core/WeightCalculator'
+import type { CogDeviation } from '../core/WeightCalculator'
+import { checkAllSupports } from '../core/GravityChecker'
+import type { SupportResult } from '../core/GravityChecker'
+import { serializeSaveData, downloadJson } from '../core/SaveLoad'
+import type { SaveData } from '../core/SaveLoad'
+import type { VoxelizeResult } from '../core/Voxelizer'
+import type { VoxelGrid } from '../core/VoxelGrid'
 
 const defaultContainer = CONTAINER_PRESETS[0]!
 const historyManager = new HistoryManager(100)
+
+const initialWeightResult: WeightResult = {
+  totalWeightKg: 0,
+  centerOfGravity: { x: 0, y: 0, z: 0 },
+  fillRatePercent: 0,
+  overweight: false,
+}
 
 export interface AppState {
   // Container
@@ -18,6 +33,7 @@ export interface AppState {
   addCargoDef: (def: CargoItemDef) => void
   removeCargoDef: (id: string) => void
   updateCargoDef: (id: string, updates: Partial<Omit<CargoItemDef, 'id'>>) => void
+  importCargoDefs: (defs: CargoItemDef[]) => void
 
   // Placements
   placements: PlacedCargo[]
@@ -50,11 +66,34 @@ export interface AppState {
   // Render version (triggers renderer updates)
   renderVersion: number
 
+  // Analytics
+  weightResult: WeightResult
+  cogDeviation: CogDeviation | null
+  supportResults: Map<number, SupportResult>
+
+  // Save/Load
+  saveState: () => void
+  loadState: (data: SaveData) => void
+
   // History
   canUndo: boolean
   canRedo: boolean
   undo: () => void
   redo: () => void
+}
+
+function recomputeAnalytics(
+  placements: PlacedCargo[],
+  cargoDefs: CargoItemDef[],
+  container: ContainerDef,
+): { weightResult: WeightResult; cogDeviation: CogDeviation | null; supportResults: Map<number, SupportResult> } {
+  const weightResult = computeWeight(placements, cargoDefs, container)
+  const cogDeviation = placements.length > 0
+    ? computeCogDeviation(weightResult.centerOfGravity, container)
+    : null
+  const grid = getVoxelGrid()
+  const supportResults = checkAllSupports(grid, placements, cargoDefs)
+  return { weightResult, cogDeviation, supportResults }
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -78,6 +117,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       canUndo: false,
       canRedo: false,
       renderVersion: state.renderVersion + 1,
+      weightResult: initialWeightResult,
+      cogDeviation: null,
+      supportResults: new Map(),
     }))
   },
 
@@ -94,10 +136,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     for (const p of toRemove) {
       grid.clearObject(p.instanceId)
     }
+    const newPlacements = state.placements.filter((p) => p.cargoDefId !== id)
+    const newDefs = state.cargoDefs.filter((d) => d.id !== id)
+    const analytics = recomputeAnalytics(newPlacements, newDefs, state.container)
     set({
-      cargoDefs: state.cargoDefs.filter((d) => d.id !== id),
-      placements: state.placements.filter((p) => p.cargoDefId !== id),
+      cargoDefs: newDefs,
+      placements: newPlacements,
       renderVersion: state.renderVersion + 1,
+      ...analytics,
     })
   },
   updateCargoDef: (id, updates) => {
@@ -106,6 +152,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         d.id === id ? { ...d, ...updates } : d,
       ),
       renderVersion: state.renderVersion + 1,
+    }))
+  },
+  importCargoDefs: (defs) => {
+    set((state) => ({
+      cargoDefs: [...state.cargoDefs, ...defs],
     }))
   },
 
@@ -140,12 +191,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     const cmd = new PlaceCommand(instanceId, result, def.name, newPlacement)
     historyManager.executeCommand(cmd, grid)
 
+    const newPlacements = [...state.placements, newPlacement]
+    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
+
     set({
-      placements: [...state.placements, newPlacement],
+      placements: newPlacements,
       nextInstanceId: instanceId + 1,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
+      ...analytics,
     })
   },
   removePlacement: (instanceId) => {
@@ -166,12 +221,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       grid.clearObject(instanceId)
     }
 
+    const newPlacements = state.placements.filter((p) => p.instanceId !== instanceId)
+    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
+
     set({
-      placements: state.placements.filter((p) => p.instanceId !== instanceId),
+      placements: newPlacements,
       selectedInstanceId: state.selectedInstanceId === instanceId ? null : state.selectedInstanceId,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
+      ...analytics,
     })
   },
   moveCargo: (instanceId, newPosition) => {
@@ -206,13 +265,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     )
     historyManager.executeCommand(cmd, grid)
 
+    const newPlacements = state.placements.map((p) =>
+      p.instanceId === instanceId ? updatedPlacement : p,
+    )
+    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
+
     set({
-      placements: state.placements.map((p) =>
-        p.instanceId === instanceId ? updatedPlacement : p,
-      ),
+      placements: newPlacements,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
+      ...analytics,
     })
   },
   rotateCargo: (instanceId, newRotation) => {
@@ -257,13 +320,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     )
     historyManager.executeCommand(cmd, grid)
 
+    const newPlacements = state.placements.map((p) =>
+      p.instanceId === instanceId ? updatedPlacement : p,
+    )
+    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
+
     set({
-      placements: state.placements.map((p) =>
-        p.instanceId === instanceId ? updatedPlacement : p,
-      ),
+      placements: newPlacements,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
+      ...analytics,
     })
   },
 
@@ -290,6 +357,57 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Render version
   renderVersion: 0,
 
+  // Analytics
+  weightResult: initialWeightResult,
+  cogDeviation: null,
+  supportResults: new Map(),
+
+  // Save/Load
+  saveState: () => {
+    const state = get()
+    const json = serializeSaveData({
+      container: state.container,
+      cargoDefs: state.cargoDefs,
+      placements: state.placements,
+      nextInstanceId: state.nextInstanceId,
+    })
+    downloadJson(json, 'container-layout.json')
+  },
+  loadState: (data: SaveData) => {
+    // Recreate VoxelGrid
+    createVoxelGrid(data.container)
+    const grid = getVoxelGrid()
+
+    // Restore all placements into VoxelGrid
+    const defMap = new Map<string, CargoItemDef>()
+    for (const d of data.cargoDefs) {
+      defMap.set(d.id, d)
+    }
+    for (const p of data.placements) {
+      const def = defMap.get(p.cargoDefId)
+      if (!def) continue
+      const result = voxelize(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
+      fillFromResult(grid, result, p.instanceId)
+    }
+
+    historyManager.clear()
+
+    const analytics = recomputeAnalytics(data.placements, data.cargoDefs, data.container)
+
+    set((state) => ({
+      container: data.container,
+      cargoDefs: data.cargoDefs,
+      placements: data.placements,
+      nextInstanceId: data.nextInstanceId,
+      selectedInstanceId: null,
+      dragState: null,
+      canUndo: false,
+      canRedo: false,
+      renderVersion: state.renderVersion + 1,
+      ...analytics,
+    }))
+  },
+
   // History
   canUndo: false,
   canRedo: false,
@@ -299,40 +417,33 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!command) return
 
     const state = get()
+    let newPlacements: PlacedCargo[]
 
     if (command instanceof PlaceCommand) {
-      set({
-        placements: state.placements.filter((p) => p.instanceId !== command.instanceId),
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = state.placements.filter((p) => p.instanceId !== command.instanceId)
     } else if (command instanceof RemoveCommand) {
-      set({
-        placements: [...state.placements, command.placement],
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = [...state.placements, command.placement]
     } else if (command instanceof MoveCommand) {
-      set({
-        placements: state.placements.map((p) =>
-          p.instanceId === command.instanceId ? command.oldPlacement : p,
-        ),
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = state.placements.map((p) =>
+        p.instanceId === command.instanceId ? command.oldPlacement : p,
+      )
     } else if (command instanceof RotateCommand) {
-      set({
-        placements: state.placements.map((p) =>
-          p.instanceId === command.instanceId ? command.oldPlacement : p,
-        ),
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = state.placements.map((p) =>
+        p.instanceId === command.instanceId ? command.oldPlacement : p,
+      )
+    } else {
+      return
     }
+
+    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
+
+    set({
+      placements: newPlacements,
+      canUndo: historyManager.canUndo,
+      canRedo: historyManager.canRedo,
+      renderVersion: state.renderVersion + 1,
+      ...analytics,
+    })
   },
   redo: () => {
     const grid = getVoxelGrid()
@@ -340,47 +451,37 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!command) return
 
     const state = get()
+    let newPlacements: PlacedCargo[]
 
     if (command instanceof PlaceCommand) {
-      set({
-        placements: [...state.placements, command.placement],
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = [...state.placements, command.placement]
     } else if (command instanceof RemoveCommand) {
-      set({
-        placements: state.placements.filter((p) => p.instanceId !== command.instanceId),
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = state.placements.filter((p) => p.instanceId !== command.instanceId)
     } else if (command instanceof MoveCommand) {
-      set({
-        placements: state.placements.map((p) =>
-          p.instanceId === command.instanceId ? command.placement : p,
-        ),
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = state.placements.map((p) =>
+        p.instanceId === command.instanceId ? command.placement : p,
+      )
     } else if (command instanceof RotateCommand) {
-      set({
-        placements: state.placements.map((p) =>
-          p.instanceId === command.instanceId ? command.placement : p,
-        ),
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
+      newPlacements = state.placements.map((p) =>
+        p.instanceId === command.instanceId ? command.placement : p,
+      )
+    } else {
+      return
     }
+
+    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
+
+    set({
+      placements: newPlacements,
+      canUndo: historyManager.canUndo,
+      canRedo: historyManager.canRedo,
+      renderVersion: state.renderVersion + 1,
+      ...analytics,
+    })
   },
 }))
 
 // Helper: fill/clear voxels from VoxelizeResult
-import type { VoxelizeResult } from '../core/Voxelizer'
-import type { VoxelGrid } from '../core/VoxelGrid'
-
 function fillFromResult(grid: VoxelGrid, result: VoxelizeResult, id: number): void {
   if (result.usesFastPath) {
     const { min, max } = result.aabb

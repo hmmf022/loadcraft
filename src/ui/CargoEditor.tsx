@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useAppStore } from '../state/store'
+import { parseCargoFile } from '../core/ImportParser'
 import styles from './CargoEditor.module.css'
 
 interface FormState {
@@ -24,7 +25,9 @@ export function CargoEditor() {
   const [form, setForm] = useState<FormState>(defaultForm)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const addCargoDef = useAppStore((s) => s.addCargoDef)
+  const importCargoDefs = useAppStore((s) => s.importCargoDefs)
   const container = useAppStore((s) => s.container)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const handleChange = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }))
@@ -69,6 +72,29 @@ export function CargoEditor() {
     })
     setForm(defaultForm)
     setErrors({})
+  }
+
+  const handleImportClick = () => {
+    importInputRef.current?.click()
+  }
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = parseCargoFile(reader.result as string, file.name)
+      if (result.defs.length > 0) {
+        importCargoDefs(result.defs)
+      }
+      if (result.errors.length > 0) {
+        alert(`インポートエラー:\n${result.errors.join('\n')}`)
+      }
+    }
+    reader.readAsText(file)
+
+    e.target.value = ''
   }
 
   return (
@@ -148,9 +174,21 @@ export function CargoEditor() {
         </div>
       </div>
 
-      <button type="submit" className={styles.addButton}>
-        追加
-      </button>
+      <div className={styles.row}>
+        <button type="submit" className={styles.addButton}>
+          追加
+        </button>
+        <button type="button" className={styles.importButton} onClick={handleImportClick}>
+          インポート
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".csv,.json"
+          style={{ display: 'none' }}
+          onChange={handleImportFile}
+        />
+      </div>
     </form>
   )
 }

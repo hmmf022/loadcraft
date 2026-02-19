@@ -53,6 +53,7 @@
 }
 
 .addButton {
+  flex: 1;
   padding: 6px 12px;
   background: var(--accent);
   color: #fff;
@@ -65,4 +66,20 @@
 
 .addButton:hover {
   background: var(--accent-hover);
+}
+
+.importButton {
+  flex: 1;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.importButton:hover {
+  background: var(--border);
 }
