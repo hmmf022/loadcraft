@@ -3,7 +3,7 @@ import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraVi
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand } from '../core/History'
-import { voxelize } from '../core/Voxelizer'
+import { voxelize, computeRotatedAABB } from '../core/Voxelizer'
 import { computeWeight, computeCogDeviation } from '../core/WeightCalculator'
 import type { CogDeviation } from '../core/WeightCalculator'
 import { checkAllSupports } from '../core/GravityChecker'
@@ -303,12 +303,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const pos = placement.positionCm
     const oldRot = placement.rotationDeg
 
-    const oldResult = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, oldRot)
-    const newResult = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, newRotation)
+    // Auto-adjust Y position if rotation causes floor clipping
+    let adjustedPos = pos
+    const testAABB = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, pos, newRotation)
+    if (testAABB.min.y < 0) {
+      adjustedPos = { ...pos, y: pos.y - testAABB.min.y }
+    }
 
-    // Bounds check
+    const oldResult = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, oldRot)
+    const newResult = voxelize(def.widthCm, def.heightCm, def.depthCm, adjustedPos, newRotation)
+
+    // Bounds check (floor is handled above via adjustedPos)
     const { min, max } = newResult.aabb
-    if (min.x < 0 || min.y < 0 || min.z < 0) return
+    if (min.x < 0 || min.z < 0) return
     if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return
 
     // Collision check: clear old, test new
@@ -324,6 +331,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const updatedPlacement: PlacedCargo = {
       ...placement,
+      positionCm: adjustedPos,
       rotationDeg: newRotation,
     }
 

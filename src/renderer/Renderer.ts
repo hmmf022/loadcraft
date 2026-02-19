@@ -74,15 +74,12 @@ export class Renderer {
   private ghostVisible = false
 
   // Container pipeline
-  private containerTransparentPipeline!: GPURenderPipeline
-  private containerOpaquePipeline!: GPURenderPipeline
+  private containerPipeline!: GPURenderPipeline
   private containerVertexBuffer!: GPUBuffer
   private containerIndexBuffer!: GPUBuffer
   private containerIndexCount = 0
   private containerUniformBuffer!: GPUBuffer
   private containerBindGroup!: GPUBindGroup
-  private containerTransparentUniformBuffer!: GPUBuffer
-  private containerTransparentBindGroup!: GPUBindGroup
 
   // Grid pipeline
   private gridPipeline!: GPURenderPipeline
@@ -186,40 +183,24 @@ export class Renderer {
       this.device, this.format, this.cameraBindGroupLayout,
       590, 239, 235,
     )
-    this.containerTransparentPipeline = container.transparentPipeline
-    this.containerOpaquePipeline = container.opaquePipeline
+    this.containerPipeline = container.pipeline
     this.containerVertexBuffer = container.vertexBuffer
     this.containerIndexBuffer = container.indexBuffer
     this.containerIndexCount = container.indexCount
 
-    // Container uniforms - opaque (front faces, alpha=1.0)
+    // Container uniforms - wireframe color
     this.containerUniformBuffer = this.device.createBuffer({
       size: 80, // mat4x4 + vec4
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     })
-    const opaqueData = new Float32Array(20)
-    opaqueData.set(mat4Identity(), 0) // model matrix = identity
-    opaqueData.set([0.6, 0.65, 0.7, 1.0], 16) // steel blue-gray, opaque
-    this.device.queue.writeBuffer(this.containerUniformBuffer, 0, opaqueData)
+    const uniformData = new Float32Array(20)
+    uniformData.set(mat4Identity(), 0) // model matrix = identity
+    uniformData.set([0.5, 0.55, 0.6, 0.7], 16) // semi-transparent gray
+    this.device.queue.writeBuffer(this.containerUniformBuffer, 0, uniformData)
 
     this.containerBindGroup = this.device.createBindGroup({
       layout: container.containerBindGroupLayout,
       entries: [{ binding: 0, resource: { buffer: this.containerUniformBuffer } }],
-    })
-
-    // Container uniforms - transparent (back faces, alpha=0.3)
-    this.containerTransparentUniformBuffer = this.device.createBuffer({
-      size: 80,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-    const transparentData = new Float32Array(20)
-    transparentData.set(mat4Identity(), 0)
-    transparentData.set([0.6, 0.65, 0.7, 0.3], 16) // same color, transparent
-    this.device.queue.writeBuffer(this.containerTransparentUniformBuffer, 0, transparentData)
-
-    this.containerTransparentBindGroup = this.device.createBindGroup({
-      layout: container.containerBindGroupLayout,
-      entries: [{ binding: 0, resource: { buffer: this.containerTransparentUniformBuffer } }],
     })
 
     // Grid pipeline
@@ -335,15 +316,10 @@ export class Renderer {
     this.containerIndexCount = container.indexCount
 
     // Update container uniforms
-    const opaqueData = new Float32Array(20)
-    opaqueData.set(mat4Identity(), 0)
-    opaqueData.set([0.6, 0.65, 0.7, 1.0], 16)
-    this.device.queue.writeBuffer(this.containerUniformBuffer, 0, opaqueData)
-
-    const transparentData = new Float32Array(20)
-    transparentData.set(mat4Identity(), 0)
-    transparentData.set([0.6, 0.65, 0.7, 0.3], 16)
-    this.device.queue.writeBuffer(this.containerTransparentUniformBuffer, 0, transparentData)
+    const uniformData = new Float32Array(20)
+    uniformData.set(mat4Identity(), 0)
+    uniformData.set([0.5, 0.55, 0.6, 0.7], 16)
+    this.device.queue.writeBuffer(this.containerUniformBuffer, 0, uniformData)
 
     // Update camera target to center of new container
     this.camera.setState({ target: { x: w / 2, y: h / 2, z: d / 2 } })
@@ -458,7 +434,7 @@ export class Renderer {
       ghostPass.end()
     }
 
-    // Pass 2: Container walls
+    // Pass 2: Container wireframe
     const pass2 = commandEncoder.beginRenderPass({
       colorAttachments: [{
         view: textureView,
@@ -471,16 +447,11 @@ export class Renderer {
         depthStoreOp: 'store',
       },
     })
-    // Sub-pass A: Transparent back faces
-    pass2.setPipeline(this.containerTransparentPipeline)
+    pass2.setPipeline(this.containerPipeline)
     pass2.setBindGroup(0, this.cameraBindGroup)
-    pass2.setBindGroup(1, this.containerTransparentBindGroup)
+    pass2.setBindGroup(1, this.containerBindGroup)
     pass2.setVertexBuffer(0, this.containerVertexBuffer)
     pass2.setIndexBuffer(this.containerIndexBuffer, 'uint16')
-    pass2.drawIndexed(this.containerIndexCount)
-    // Sub-pass B: Opaque front faces
-    pass2.setPipeline(this.containerOpaquePipeline)
-    pass2.setBindGroup(1, this.containerBindGroup)
     pass2.drawIndexed(this.containerIndexCount)
     pass2.end()
 
@@ -542,7 +513,6 @@ export class Renderer {
     this.containerVertexBuffer?.destroy()
     this.containerIndexBuffer?.destroy()
     this.containerUniformBuffer?.destroy()
-    this.containerTransparentUniformBuffer?.destroy()
     this.gridVertexBuffer?.destroy()
     this.gridIndexBuffer?.destroy()
     this.depthTexture?.destroy()

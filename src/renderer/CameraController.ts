@@ -4,6 +4,9 @@ export type ClickCallback = (screenX: number, screenY: number) => void
 export type MoveStartCallback = (screenX: number, screenY: number) => void
 export type MoveCallback = (screenX: number, screenY: number) => void
 export type MoveEndCallback = (screenX: number, screenY: number) => void
+export type RotateStartCallback = (screenX: number, screenY: number) => void
+export type RotateDragCallback = (dx: number, dy: number) => void
+export type RotateEndCallback = () => void
 
 export class CameraController {
   private camera: OrbitCamera
@@ -26,10 +29,16 @@ export class CameraController {
   private moveMode = false
   private moveEnabled = false
 
+  // Rotate mode: Shift+left drag to rotate selected object
+  private rotateMode = false
+
   onClick: ClickCallback | null = null
   onMoveStart: MoveStartCallback | null = null
   onMove: MoveCallback | null = null
   onMoveEnd: MoveEndCallback | null = null
+  onRotateStart: RotateStartCallback | null = null
+  onRotateDrag: RotateDragCallback | null = null
+  onRotateEnd: RotateEndCallback | null = null
   onOrbitStart: (() => void) | null = null
 
   /** Set to true when a selected object is under the cursor */
@@ -70,14 +79,22 @@ export class CameraController {
       this.lastY = e.clientY
 
       if (this.button === 0) {
-        // Check if we should enter move mode
-        if (!this.moveMode && this.moveEnabled && totalDist > this.clickThreshold) {
-          this.moveMode = true
-          const rect = this.canvas.getBoundingClientRect()
-          this.onMoveStart?.(this.startX - rect.left, this.startY - rect.top)
+        // Check if we should enter move or rotate mode
+        if (!this.moveMode && !this.rotateMode && this.moveEnabled && totalDist > this.clickThreshold) {
+          if (e.shiftKey) {
+            this.rotateMode = true
+            const rect = this.canvas.getBoundingClientRect()
+            this.onRotateStart?.(this.startX - rect.left, this.startY - rect.top)
+          } else {
+            this.moveMode = true
+            const rect = this.canvas.getBoundingClientRect()
+            this.onMoveStart?.(this.startX - rect.left, this.startY - rect.top)
+          }
         }
 
-        if (this.moveMode) {
+        if (this.rotateMode) {
+          this.onRotateDrag?.(dx, dy)
+        } else if (this.moveMode) {
           const rect = this.canvas.getBoundingClientRect()
           this.onMove?.(e.clientX - rect.left, e.clientY - rect.top)
         } else {
@@ -99,7 +116,9 @@ export class CameraController {
         const totalDy = e.clientY - this.startY
         const totalDist = Math.sqrt(totalDx * totalDx + totalDy * totalDy)
 
-        if (this.moveMode) {
+        if (this.rotateMode) {
+          this.onRotateEnd?.()
+        } else if (this.moveMode) {
           const rect = this.canvas.getBoundingClientRect()
           this.onMoveEnd?.(e.clientX - rect.left, e.clientY - rect.top)
         } else if (totalDist < this.clickThreshold) {
@@ -111,6 +130,7 @@ export class CameraController {
       this.isDragging = false
       this.button = -1
       this.moveMode = false
+      this.rotateMode = false
     }
 
     this._onWheel = (e: WheelEvent) => {

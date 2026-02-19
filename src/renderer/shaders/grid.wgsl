@@ -43,10 +43,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
   let fade = 1.0 - smoothstep(3000.0, 5000.0, dist);
 
   let gridColor = vec3f(0.5, 0.5, 0.5);
-  let bgColor = vec3f(0.9, 0.9, 0.9);
-
-  let color = mix(bgColor, gridColor, lineAlpha);
-  let alpha = mix(0.3, 0.8, lineAlpha) * fade;
-
-  return vec4f(color, alpha);
+  let alpha = lineAlpha * 0.8 * fade;
+  if (alpha < 0.01) { discard; }
+  return vec4f(gridColor, alpha);
 }

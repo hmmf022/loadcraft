@@ -1,45 +1,26 @@
 import containerShader from '../shaders/container.wgsl?raw'
 
-// Container box mesh: 5 walls (no front opening), with outward normals
+// Container wireframe: 8 corner vertices, 12 edges as line-list
 function createContainerGeometry(w: number, h: number, d: number) {
-  // Each vertex: position(3) + normal(3) = 6 floats
-  // 5 faces (back, top, bottom, right, left), 4 vertices each = 20 vertices, 30 indices
+  // 8 corners, position only (3 floats each)
   // prettier-ignore
   const vertices = new Float32Array([
-    // Back face (z=d, normal 0,0,1 outward => facing inside we see it)
-    0, 0, d,  0, 0, -1,
-    w, 0, d,  0, 0, -1,
-    w, h, d,  0, 0, -1,
-    0, h, d,  0, 0, -1,
-    // Top face (y=h, normal 0,1,0)
-    0, h, 0,  0, 1, 0,
-    w, h, 0,  0, 1, 0,
-    w, h, d,  0, 1, 0,
-    0, h, d,  0, 1, 0,
-    // Bottom face (y=0, normal 0,-1,0)
-    0, 0, 0,  0, -1, 0,
-    0, 0, d,  0, -1, 0,
-    w, 0, d,  0, -1, 0,
-    w, 0, 0,  0, -1, 0,
-    // Right face (x=w, normal 1,0,0)
-    w, 0, 0,  1, 0, 0,
-    w, 0, d,  1, 0, 0,
-    w, h, d,  1, 0, 0,
-    w, h, 0,  1, 0, 0,
-    // Left face (x=0, normal -1,0,0)
-    0, 0, 0,  -1, 0, 0,
-    0, h, 0,  -1, 0, 0,
-    0, h, d,  -1, 0, 0,
-    0, 0, d,  -1, 0, 0,
+    0, 0, 0,  // 0: left-bottom-front
+    w, 0, 0,  // 1: right-bottom-front
+    w, h, 0,  // 2: right-top-front
+    0, h, 0,  // 3: left-top-front
+    0, 0, d,  // 4: left-bottom-back
+    w, 0, d,  // 5: right-bottom-back
+    w, h, d,  // 6: right-top-back
+    0, h, d,  // 7: left-top-back
   ])
 
+  // 12 edges (2 indices each)
   // prettier-ignore
   const indices = new Uint16Array([
-     0,  1,  2,   0,  2,  3,
-     4,  5,  6,   4,  6,  7,
-     8,  9, 10,   8, 10, 11,
-    12, 13, 14,  12, 14, 15,
-    16, 17, 18,  16, 18, 19,
+    0, 1,  1, 2,  2, 3,  3, 0, // front face
+    4, 5,  5, 6,  6, 7,  7, 4, // back face
+    0, 4,  1, 5,  2, 6,  3, 7, // connecting edges
   ])
 
   return { vertices, indices }
@@ -67,17 +48,15 @@ export function createContainerPipelines(
 
   const shaderModule = device.createShaderModule({ code: containerShader })
 
-  // Sub-pass A: Back faces (transparent), cullMode='front' renders back faces
-  const transparentPipeline = device.createRenderPipeline({
+  const pipeline = device.createRenderPipeline({
     layout: pipelineLayout,
     vertex: {
       module: shaderModule,
       entryPoint: 'vs_main',
       buffers: [{
-        arrayStride: 24,
+        arrayStride: 12, // position only: 3 x float32
         attributes: [
           { shaderLocation: 0, offset: 0, format: 'float32x3' },
-          { shaderLocation: 1, offset: 12, format: 'float32x3' },
         ],
       }],
     },
@@ -94,38 +73,8 @@ export function createContainerPipelines(
       }],
     },
     primitive: {
-      topology: 'triangle-list',
-      cullMode: 'front', // Renders back faces
-    },
-    depthStencil: {
-      format: 'depth24plus',
-      depthWriteEnabled: false,
-      depthCompare: 'less',
-    },
-  })
-
-  // Sub-pass B: Front faces (opaque), cullMode='back' renders front faces
-  const opaquePipeline = device.createRenderPipeline({
-    layout: pipelineLayout,
-    vertex: {
-      module: shaderModule,
-      entryPoint: 'vs_main',
-      buffers: [{
-        arrayStride: 24,
-        attributes: [
-          { shaderLocation: 0, offset: 0, format: 'float32x3' },
-          { shaderLocation: 1, offset: 12, format: 'float32x3' },
-        ],
-      }],
-    },
-    fragment: {
-      module: shaderModule,
-      entryPoint: 'fs_main',
-      targets: [{ format }],
-    },
-    primitive: {
-      topology: 'triangle-list',
-      cullMode: 'back', // Renders front faces
+      topology: 'line-list',
+      cullMode: 'none',
     },
     depthStencil: {
       format: 'depth24plus',
@@ -149,8 +98,7 @@ export function createContainerPipelines(
   device.queue.writeBuffer(indexBuffer, 0, indices)
 
   return {
-    transparentPipeline,
-    opaquePipeline,
+    pipeline,
     vertexBuffer,
     indexBuffer,
     indexCount: indices.length,

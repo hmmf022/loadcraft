@@ -28,7 +28,7 @@ function buildPickItems(): PickItem[] {
   for (const p of state.placements) {
     const def = defMap.get(p.cargoDefId)
     if (!def) continue
-    const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
+    const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg, true)
     items.push({
       instanceId: p.instanceId,
       aabb,
@@ -169,6 +169,14 @@ export function CanvasPanel() {
   const movingInstanceRef = useRef<number | null>(null)
   const moveOrigPosRef = useRef<Vec3 | null>(null)
 
+  // Track rotation drag state
+  const rotatingInstanceRef = useRef<number | null>(null)
+  const rotateOrigRotRef = useRef<Vec3 | null>(null)
+  const rotateOrigPosRef = useRef<Vec3 | null>(null)
+  const rotateCurrRotRef = useRef<Vec3>({ x: 0, y: 0, z: 0 })
+
+  const ROTATION_SENSITIVITY = 0.5 // degrees per pixel
+
   const handleClick = useCallback((screenX: number, screenY: number) => {
     const renderer = rendererRef.current
     if (!renderer) return
@@ -308,6 +316,124 @@ export function CanvasPanel() {
     renderer.updateGhost(null, 0, 0, 0, 'invalid')
   }, [])
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleRotateStart = useCallback((_screenX: number, _screenY: number) => {
+    const renderer = rendererRef.current
+    if (!renderer) return
+    const store = useAppStore.getState()
+    const selectedId = store.selectedInstanceId
+    if (selectedId === null) return
+
+    const placement = store.placements.find((p) => p.instanceId === selectedId)
+    if (!placement) return
+    const def = store.cargoDefs.find((d) => d.id === placement.cargoDefId)
+    if (!def) return
+
+    // Save original rotation and position, remove from grid temporarily
+    rotatingInstanceRef.current = selectedId
+    rotateOrigRotRef.current = { ...placement.rotationDeg }
+    rotateOrigPosRef.current = { ...placement.positionCm }
+    rotateCurrRotRef.current = { ...placement.rotationDeg }
+    const grid = getVoxelGrid()
+    grid.clearObject(selectedId)
+
+    // Show ghost at current position/rotation
+    const pos = placement.positionCm
+    const rot = placement.rotationDeg
+    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId)
+    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, rot)
+  }, [])
+
+  const handleRotateDrag = useCallback((dx: number, dy: number) => {
+    const renderer = rendererRef.current
+    if (!renderer) return
+
+    const rotatingId = rotatingInstanceRef.current
+    const origPos = rotateOrigPosRef.current
+    if (rotatingId === null || !origPos) return
+
+    const store = useAppStore.getState()
+    const placement = store.placements.find((p) => p.instanceId === rotatingId)
+    if (!placement) return
+    const def = store.cargoDefs.find((d) => d.id === placement.cargoDefId)
+    if (!def) return
+
+    // Accumulate rotation: horizontal → Y axis, vertical → X axis
+    const curr = rotateCurrRotRef.current
+    curr.y += dx * ROTATION_SENSITIVITY
+    curr.x -= dy * ROTATION_SENSITIVITY
+
+    // Auto-adjust Y position if rotation causes floor clipping
+    let pos = origPos
+    const testAABB = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, pos, curr)
+    if (testAABB.min.y < 0) {
+      pos = { ...pos, y: pos.y - testAABB.min.y }
+    }
+
+    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, curr, rotatingId)
+    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, curr)
+  }, [])
+
+  const handleRotateEnd = useCallback(() => {
+    const renderer = rendererRef.current
+    if (!renderer) return
+
+    const rotatingId = rotatingInstanceRef.current
+    const origRot = rotateOrigRotRef.current
+    const origPos = rotateOrigPosRef.current
+    if (rotatingId === null || !origRot || !origPos) return
+
+    const store = useAppStore.getState()
+    const placement = store.placements.find((p) => p.instanceId === rotatingId)
+    if (!placement) {
+      rotatingInstanceRef.current = null
+      rotateOrigRotRef.current = null
+      rotateOrigPosRef.current = null
+      renderer.updateGhost(null, 0, 0, 0, 'invalid')
+      return
+    }
+    const def = store.cargoDefs.find((d) => d.id === placement.cargoDefId)
+    if (!def) {
+      rotatingInstanceRef.current = null
+      rotateOrigRotRef.current = null
+      rotateOrigPosRef.current = null
+      renderer.updateGhost(null, 0, 0, 0, 'invalid')
+      return
+    }
+
+    const currRot = rotateCurrRotRef.current
+
+    // Restore the grid at original position/rotation first
+    const grid = getVoxelGrid()
+    const restoreResult = voxelize(def.widthCm, def.heightCm, def.depthCm, origPos, origRot)
+    if (restoreResult.usesFastPath) {
+      const { min, max } = restoreResult.aabb
+      grid.fillBox(min.x, min.y, min.z, max.x - 1, max.y - 1, max.z - 1, rotatingId)
+    } else {
+      grid.fillVoxels(restoreResult.voxels, rotatingId)
+    }
+
+    // Check if rotation actually changed
+    const rotChanged = currRot.x !== origRot.x || currRot.y !== origRot.y || currRot.z !== origRot.z
+    if (rotChanged) {
+      // Auto-adjust Y position if needed
+      let newPos = origPos
+      const testAABB = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, origPos, currRot)
+      if (testAABB.min.y < 0) {
+        newPos = { ...origPos, y: origPos.y - testAABB.min.y }
+      }
+
+      if (isValidPosition(newPos, def.widthCm, def.heightCm, def.depthCm, currRot, rotatingId)) {
+        store.rotateCargo(rotatingId, currRot)
+      }
+    }
+
+    rotatingInstanceRef.current = null
+    rotateOrigRotRef.current = null
+    rotateOrigPosRef.current = null
+    renderer.updateGhost(null, 0, 0, 0, 'invalid')
+  }, [])
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -328,11 +454,14 @@ export function CanvasPanel() {
         renderer.initLabels(containerRef.current)
       }
 
-      // Set up click and move callbacks
+      // Set up click, move, and rotate callbacks
       renderer.cameraController.onClick = handleClick
       renderer.cameraController.onMoveStart = handleMoveStart
       renderer.cameraController.onMove = handleMove
       renderer.cameraController.onMoveEnd = handleMoveEnd
+      renderer.cameraController.onRotateStart = handleRotateStart
+      renderer.cameraController.onRotateDrag = handleRotateDrag
+      renderer.cameraController.onRotateEnd = handleRotateEnd
 
       // Reset cameraView to 'free' when user orbits, cancel any transition
       renderer.cameraController.onOrbitStart = () => {
@@ -433,7 +562,7 @@ export function CanvasPanel() {
       rendererRef.current?.dispose()
       rendererRef.current = null
     }
-  }, [handleClick, handleMoveStart, handleMove, handleMoveEnd])
+  }, [handleClick, handleMoveStart, handleMove, handleMoveEnd, handleRotateStart, handleRotateDrag, handleRotateEnd])
 
   // ResizeObserver
   useEffect(() => {

@@ -43,10 +43,14 @@ function rotatePoint(m: number[], x: number, y: number, z: number): Vec3 {
   }
 }
 
-/** Compute the AABB of a rotated box at the given position */
+/** Compute the AABB of a rotated box at the given position.
+ *  exact=true returns raw floating-point bounds (for picking);
+ *  exact=false (default) snaps to integer voxel bounds.
+ */
 export function computeRotatedAABB(
   w: number, h: number, d: number,
   position: Vec3, rotationDeg: Vec3,
+  exact = false,
 ): { min: Vec3; max: Vec3 } {
   const rot = buildRotation3x3(rotationDeg)
 
@@ -70,6 +74,13 @@ export function computeRotatedAABB(
     if (px > maxX) maxX = px
     if (py > maxY) maxY = py
     if (pz > maxZ) maxZ = pz
+  }
+
+  if (exact) {
+    return {
+      min: { x: minX, y: minY, z: minZ },
+      max: { x: maxX, y: maxY, z: maxZ },
+    }
   }
 
   // Snap near-integer values to avoid floating-point floor/ceil overshoot
