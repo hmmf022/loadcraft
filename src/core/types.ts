@@ -19,14 +19,21 @@ export interface ContainerDef {
   maxPayloadKg: number
 }
 
+export interface ShapeBlock {
+  x: number; y: number; z: number  // cm offset from shape origin
+  w: number; h: number; d: number  // cm dimensions
+  color: string                     // "#RRGGBB"
+}
+
 export interface CargoItemDef {
   id: string
   name: string
-  widthCm: number
+  widthCm: number      // bounding box width (auto-computed for composite shapes)
   heightCm: number
   depthCm: number
   weightKg: number
   color: string
+  blocks?: ShapeBlock[] // undefined = conventional box (backward compatible)
 }
 
 export interface PlacedCargo {

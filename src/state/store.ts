@@ -3,7 +3,7 @@ import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraVi
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand } from '../core/History'
-import { voxelize, computeRotatedAABB } from '../core/Voxelizer'
+import { voxelize, voxelizeComposite, computeRotatedAABB } from '../core/Voxelizer'
 import { computeWeight, computeCogDeviation } from '../core/WeightCalculator'
 import type { CogDeviation } from '../core/WeightCalculator'
 import { checkAllSupports } from '../core/GravityChecker'
@@ -186,7 +186,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const pos = { x: Math.round(position.x), y: Math.round(position.y), z: Math.round(position.z) }
     const rot = rotation ?? { x: 0, y: 0, z: 0 }
 
-    const result = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, rot)
+    const result = voxelizeCargo(def, pos, rot)
     const grid = getVoxelGrid()
 
     // Bounds check via AABB
@@ -227,7 +227,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (def) {
       const pos = placement.positionCm
       const rot = placement.rotationDeg
-      const result = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, rot)
+      const result = voxelizeCargo(def, pos, rot)
       const cmd = new RemoveCommand(instanceId, result, def.name, placement)
       historyManager.executeCommand(cmd, grid)
     } else {
@@ -259,8 +259,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const rot = placement.rotationDeg
     const newPos = { x: Math.round(newPosition.x), y: Math.round(newPosition.y), z: Math.round(newPosition.z) }
 
-    const oldResult = voxelize(def.widthCm, def.heightCm, def.depthCm, oldPos, rot)
-    const newResult = voxelize(def.widthCm, def.heightCm, def.depthCm, newPos, rot)
+    const oldResult = voxelizeCargo(def, oldPos, rot)
+    const newResult = voxelizeCargo(def, newPos, rot)
 
     // Bounds check
     const { min, max } = newResult.aabb
@@ -310,8 +310,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       adjustedPos = { ...pos, y: pos.y - testAABB.min.y }
     }
 
-    const oldResult = voxelize(def.widthCm, def.heightCm, def.depthCm, pos, oldRot)
-    const newResult = voxelize(def.widthCm, def.heightCm, def.depthCm, adjustedPos, newRotation)
+    const oldResult = voxelizeCargo(def, pos, oldRot)
+    const newResult = voxelizeCargo(def, adjustedPos, newRotation)
 
     // Bounds check (floor is handled above via adjustedPos)
     const { min, max } = newResult.aabb
@@ -432,7 +432,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     for (const p of data.placements) {
       const def = defMap.get(p.cargoDefId)
       if (!def) continue
-      const result = voxelize(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
+      const result = voxelizeCargo(def, p.positionCm, p.rotationDeg)
       fillFromResult(grid, result, p.instanceId)
     }
 
@@ -526,6 +526,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     })
   },
 }))
+
+/** Voxelize a cargo item, using composite path for shapes with blocks */
+function voxelizeCargo(def: CargoItemDef, pos: Vec3, rot: Vec3): VoxelizeResult {
+  if (def.blocks) {
+    return voxelizeComposite(def.blocks, pos, rot)
+  }
+  return voxelize(def.widthCm, def.heightCm, def.depthCm, pos, rot)
+}
 
 // Helper: fill/clear voxels from VoxelizeResult
 function fillFromResult(grid: VoxelGrid, result: VoxelizeResult, id: number): void {

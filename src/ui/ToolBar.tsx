@@ -104,6 +104,15 @@ export function ToolBar() {
           ))}
         </select>
       )}
+      <div className={styles.separator} />
+      <a
+        href="/editor.html"
+        target="_blank"
+        rel="noopener noreferrer"
+        className={styles.button}
+      >
+        Editor
+      </a>
     </div>
   )
 }

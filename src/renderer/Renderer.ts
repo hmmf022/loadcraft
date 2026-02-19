@@ -6,7 +6,7 @@ import { createCargoPipeline, createGhostPipeline, INSTANCE_BYTE_SIZE } from './
 import { createContainerPipelines } from './pipelines/ContainerPipeline'
 import { createGridPipeline } from './pipelines/GridPipeline'
 import { mat4Translation, mat4Scaling, mat4Multiply, mat4Identity, mat4RotationX, mat4RotationY, mat4RotationZ } from '../utils/math'
-import type { PlacedCargo, CargoItemDef, Vec3 } from '../core/types'
+import type { PlacedCargo, CargoItemDef, Vec3, ShapeBlock } from '../core/types'
 import { computeRotatedAABB } from '../core/Voxelizer'
 
 const DEG_TO_RAD = Math.PI / 180
@@ -28,6 +28,26 @@ function buildModelMatrix(pos: Vec3, rotDeg: Vec3, w: number, h: number, d: numb
   const s = mat4Scaling(w, h, d)
   // chain: tPos * rz * rx * ry * tCenter * s
   let m = mat4Multiply(tCenter, s)
+  m = mat4Multiply(ry, m)
+  m = mat4Multiply(rx, m)
+  m = mat4Multiply(rz, m)
+  m = mat4Multiply(tPos, m)
+  return m
+}
+
+function buildCompositeBlockMatrix(
+  pos: Vec3, rotDeg: Vec3,
+  bx: number, by: number, bz: number,
+  bw: number, bh: number, bd: number,
+) {
+  // M = T(pos) * Rz * Rx * Ry * T(bx + bw/2, by + bh/2, bz + bd/2) * S(bw, bh, bd)
+  const tPos = mat4Translation(pos.x, pos.y, pos.z)
+  const ry = mat4RotationY(rotDeg.y * DEG_TO_RAD)
+  const rx = mat4RotationX(rotDeg.x * DEG_TO_RAD)
+  const rz = mat4RotationZ(rotDeg.z * DEG_TO_RAD)
+  const tBlock = mat4Translation(bx + bw / 2, by + bh / 2, bz + bd / 2)
+  const s = mat4Scaling(bw, bh, bd)
+  let m = mat4Multiply(tBlock, s)
   m = mat4Multiply(ry, m)
   m = mat4Multiply(rx, m)
   m = mat4Multiply(rz, m)
@@ -72,6 +92,7 @@ export class Renderer {
   private ghostBuffer: GPUBuffer | null = null
   private ghostBindGroup: GPUBindGroup | null = null
   private ghostVisible = false
+  private ghostInstanceCount = 1
 
   // Container pipeline
   private containerPipeline!: GPURenderPipeline
@@ -212,7 +233,20 @@ export class Renderer {
   }
 
   updateInstances(placements: PlacedCargo[], cargoDefs: CargoItemDef[]): void {
-    this.instanceCount = placements.length
+    const defMap = new Map<string, CargoItemDef>()
+    for (const def of cargoDefs) {
+      defMap.set(def.id, def)
+    }
+
+    // Count total instances (composite shapes = N blocks per placement)
+    let totalInstances = 0
+    for (const p of placements) {
+      const def = defMap.get(p.cargoDefId)
+      if (!def) continue
+      totalInstances += def.blocks ? def.blocks.length : 1
+    }
+
+    this.instanceCount = totalInstances
     if (this.instanceCount === 0) {
       this.instanceBuffer?.destroy()
       this.instanceBuffer = null
@@ -223,32 +257,46 @@ export class Renderer {
     const dataSize = this.instanceCount * INSTANCE_BYTE_SIZE
     const data = new Float32Array(this.instanceCount * 20)
 
-    const defMap = new Map<string, CargoItemDef>()
-    for (const def of cargoDefs) {
-      defMap.set(def.id, def)
-    }
-
-    for (let i = 0; i < placements.length; i++) {
-      const p = placements[i]!
+    let idx = 0
+    for (const p of placements) {
       const def = defMap.get(p.cargoDefId)
       if (!def) continue
 
-      const w = def.widthCm
-      const h = def.heightCm
-      const d = def.depthCm
+      const isSelected = p.instanceId === this.selectedInstanceId
 
-      // Model matrix = T(pos) * Rz * Rx * Ry * T(w/2, h/2, d/2) * S(w, h, d)
-      const modelMatrix = buildModelMatrix(p.positionCm, p.rotationDeg, w, h, d)
+      if (def.blocks) {
+        // Composite shape: one GPU instance per block
+        for (const block of def.blocks) {
+          // M = T(pos) * Rz * Rx * Ry * T(block.x + w/2, block.y + h/2, block.z + d/2) * S(w, h, d)
+          const blockModelMatrix = buildCompositeBlockMatrix(
+            p.positionCm, p.rotationDeg,
+            block.x, block.y, block.z, block.w, block.h, block.d,
+          )
 
-      const offset = i * 20
-      data.set(modelMatrix, offset)
+          const offset = idx * 20
+          data.set(blockModelMatrix, offset)
 
-      const [r, g, b] = hexToRGBA(def.color)
-      data[offset + 16] = r
-      data[offset + 17] = g
-      data[offset + 18] = b
-      // Use alpha > 1.5 to signal selected state to the shader
-      data[offset + 19] = p.instanceId === this.selectedInstanceId ? 2.0 : 1.0
+          const [r, g, b] = hexToRGBA(block.color)
+          data[offset + 16] = r
+          data[offset + 17] = g
+          data[offset + 18] = b
+          data[offset + 19] = isSelected ? 2.0 : 1.0
+          idx++
+        }
+      } else {
+        // Simple box
+        const modelMatrix = buildModelMatrix(p.positionCm, p.rotationDeg, def.widthCm, def.heightCm, def.depthCm)
+
+        const offset = idx * 20
+        data.set(modelMatrix, offset)
+
+        const [r, g, b] = hexToRGBA(def.color)
+        data[offset + 16] = r
+        data[offset + 17] = g
+        data[offset + 18] = b
+        data[offset + 19] = isSelected ? 2.0 : 1.0
+        idx++
+      }
     }
 
     // Recreate buffer if size changed
@@ -267,35 +315,63 @@ export class Renderer {
     })
   }
 
-  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, validity: 'valid' | 'invalid' | 'floating', rotationDeg?: Vec3): void {
+  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, validity: 'valid' | 'invalid' | 'floating', rotationDeg?: Vec3, blocks?: ShapeBlock[]): void {
     if (!position) {
       this.ghostVisible = false
+      this.ghostInstanceCount = 0
       return
     }
 
     this.ghostVisible = true
-    const data = new Float32Array(20)
-
     const rot = rotationDeg ?? { x: 0, y: 0, z: 0 }
-    const modelMatrix = buildModelMatrix(position, rot, widthCm, heightCm, depthCm)
-    data.set(modelMatrix, 0)
 
+    let ghostColor: [number, number, number, number]
     if (validity === 'valid') {
-      data[16] = 0.3; data[17] = 0.8; data[18] = 0.3; data[19] = 0.4 // green
+      ghostColor = [0.3, 0.8, 0.3, 0.4]
     } else if (validity === 'floating') {
-      data[16] = 0.9; data[17] = 0.8; data[18] = 0.2; data[19] = 0.4 // yellow
+      ghostColor = [0.9, 0.8, 0.2, 0.4]
     } else {
-      data[16] = 0.9; data[17] = 0.2; data[18] = 0.2; data[19] = 0.4 // red
+      ghostColor = [0.9, 0.2, 0.2, 0.4]
     }
 
-    if (this.ghostBuffer) {
-      this.ghostBuffer.destroy()
+    if (blocks && blocks.length > 0) {
+      // Composite ghost: one instance per block
+      const count = blocks.length
+      this.ghostInstanceCount = count
+      const data = new Float32Array(count * 20)
+
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i]!
+        const m = buildCompositeBlockMatrix(position, rot, b.x, b.y, b.z, b.w, b.h, b.d)
+        const offset = i * 20
+        data.set(m, offset)
+        data[offset + 16] = ghostColor[0]
+        data[offset + 17] = ghostColor[1]
+        data[offset + 18] = ghostColor[2]
+        data[offset + 19] = ghostColor[3]
+      }
+
+      if (this.ghostBuffer) this.ghostBuffer.destroy()
+      this.ghostBuffer = this.device.createBuffer({
+        size: data.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      })
+      this.device.queue.writeBuffer(this.ghostBuffer, 0, data)
+    } else {
+      // Simple box ghost
+      this.ghostInstanceCount = 1
+      const data = new Float32Array(20)
+      const modelMatrix = buildModelMatrix(position, rot, widthCm, heightCm, depthCm)
+      data.set(modelMatrix, 0)
+      data[16] = ghostColor[0]; data[17] = ghostColor[1]; data[18] = ghostColor[2]; data[19] = ghostColor[3]
+
+      if (this.ghostBuffer) this.ghostBuffer.destroy()
+      this.ghostBuffer = this.device.createBuffer({
+        size: data.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      })
+      this.device.queue.writeBuffer(this.ghostBuffer, 0, data)
     }
-    this.ghostBuffer = this.device.createBuffer({
-      size: data.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    })
-    this.device.queue.writeBuffer(this.ghostBuffer, 0, data)
 
     this.ghostBindGroup = this.device.createBindGroup({
       layout: this.instanceBindGroupLayout,
@@ -430,7 +506,7 @@ export class Renderer {
       ghostPass.setBindGroup(1, this.ghostBindGroup)
       ghostPass.setVertexBuffer(0, this.cargoVertexBuffer)
       ghostPass.setIndexBuffer(this.cargoIndexBuffer, 'uint16')
-      ghostPass.drawIndexed(this.cargoIndexCount, 1)
+      ghostPass.drawIndexed(this.cargoIndexCount, this.ghostInstanceCount)
       ghostPass.end()
     }
 

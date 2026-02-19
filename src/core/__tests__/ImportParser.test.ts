@@ -100,7 +100,7 @@ describe('parseCargoJSON', () => {
 
   it('reports error for non-array JSON', () => {
     const result = parseCargoJSON('{"name": "test"}')
-    expect(result.errors).toEqual(['JSON must be an array of cargo definitions'])
+    expect(result.errors).toEqual(['JSON is not a valid cargo array or shape file'])
   })
 
   it('reports error for items with invalid fields', () => {

@@ -35,6 +35,21 @@ export function validateSaveData(data: unknown): data is SaveData {
     if (typeof cd['depthCm'] !== 'number' || cd['depthCm'] <= 0) return false
     if (typeof cd['weightKg'] !== 'number' || cd['weightKg'] <= 0) return false
     if (typeof cd['color'] !== 'string') return false
+    // Optional blocks field for composite shapes
+    if (cd['blocks'] !== undefined) {
+      if (!Array.isArray(cd['blocks'])) return false
+      for (const b of cd['blocks'] as unknown[]) {
+        if (typeof b !== 'object' || b === null) return false
+        const sb = b as Record<string, unknown>
+        if (typeof sb['x'] !== 'number') return false
+        if (typeof sb['y'] !== 'number') return false
+        if (typeof sb['z'] !== 'number') return false
+        if (typeof sb['w'] !== 'number' || sb['w'] <= 0) return false
+        if (typeof sb['h'] !== 'number' || sb['h'] <= 0) return false
+        if (typeof sb['d'] !== 'number' || sb['d'] <= 0) return false
+        if (typeof sb['color'] !== 'string') return false
+      }
+    }
   }
 
   // Validate placements array

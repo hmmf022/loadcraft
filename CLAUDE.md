@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Container loading simulator with WebGPU 3D visualization. Users define cargo items in a sidebar, place them into shipping containers, and view the result in a real-time 3D scene. All units are in centimeters.
 
+Includes a **Voxel Shape Editor** (`editor.html`) — a Minecraft creative mode-style block editor for building composite (non-rectangular) cargo shapes. Shapes are exported as `.shape.json` files and imported into the simulator as multi-block cargo items.
+
 ## Commands
 
 - `npm run dev` — Start dev server (Vite, serves on localhost with COOP/COEP headers for SharedArrayBuffer)
@@ -19,7 +21,7 @@ Container loading simulator with WebGPU 3D visualization. Users define cargo ite
 
 ### Three-Layer Design
 
-1. **Core (`src/core/`)** — Data layer. VoxelGrid (collision detection at 1cm resolution), types, History (undo/redo command pattern), Voxelizer, WeightCalculator, GravityChecker, SaveLoad, ImportParser. No DOM or GPU dependencies (SaveLoad の `downloadJson` のみ DOM 使用).
+1. **Core (`src/core/`)** — Data layer. VoxelGrid (collision detection at 1cm resolution), types, History (undo/redo command pattern), Voxelizer, WeightCalculator, GravityChecker, SaveLoad, ImportParser, ShapeCompressor, ShapeParser. No DOM or GPU dependencies (SaveLoad の `downloadJson` のみ DOM 使用).
 2. **Renderer (`src/renderer/`)** — WebGPU rendering. Shaders (WGSL), camera, pipelines. Receives data from store, outputs to canvas. No React dependencies.
 3. **UI + State (`src/ui/`, `src/state/`)** — React components + Zustand store. Store is the single source of truth, bridges Core and Renderer.
 
@@ -56,7 +58,7 @@ UI action → Zustand store → VoxelGrid (collision) + History (undo)
 
 ## 実装状況と設計書との差分
 
-Phase 1-2-3-4-5 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述しているため、現時点の実装との差分を以下に記録する。
+シミュレータ Phase 1-5 完了。ボクセルシェイプエディタ全6Phase 完了。設計書 (`docs/`) は全Phase分の完全仕様を記述しているため、現時点の実装との差分を以下に記録する。
 
 ### 既知の制限事項（次Phase以降で修正必要）
 
@@ -153,6 +155,75 @@ Phase 1-2-3-4-5 完了。設計書 (`docs/`) は全Phase分の完全仕様を記
 
 - **選択アウトライン (post-effect)**: 新 GPU パイプライン＋オフスクリーンテクスチャ＋Sobel フィルタが必要。現在のリムハイライトで十分機能
 - **パフォーマンス最適化 (frustum culling/LOD/Web Worker)**: 現規模（〜100 荷物）ではインスタンス描画で十分高速
+
+## Voxel Shape Editor
+
+### 概要
+
+Minecraft クリエイティブモード風のボクセルシェイプエディタ。`editor.html` から起動する別エントリポイント。既存のレンダラー・カメラ・パイプラインを最大限再利用。
+
+- **URL**: `http://localhost:5173/editor.html`
+- **ビルド**: Vite multi-entry (`vite.config.ts` の `rollupOptions.input` に `editor` エントリ追加)
+
+### ディレクトリ構成
+
+```
+src/editor/
+├── main.tsx                    # React エントリポイント
+├── EditorApp.tsx               # ルートコンポーネント (useReducer + history)
+├── EditorApp.module.css
+├── renderer/
+│   ├── EditorRenderer.ts       # WebGPU レンダラー (4パス: blocks/ghost/boundary/grid)
+│   ├── EditorCameraController.ts # オービット/パン/ズーム + クリック/ホバー検出
+│   ├── EditorRaycaster.ts      # ブロックピッキング (面検出 + 隣接セル計算)
+│   └── BoundaryPipeline.ts     # グリッド境界ワイヤーフレーム
+├── state/
+│   ├── types.ts                # EditorState, EditorAction, EditorBlock, EditorTool
+│   ├── editorReducer.ts        # 純粋 Reducer (PLACE/REMOVE/PAINT/CLEAR/LOAD...)
+│   └── history.ts              # スナップショットベース Undo/Redo (Map before/after, 上限100)
+└── ui/
+    ├── EditorCanvas.tsx         # WebGPU キャンバス + イベントハンドリング
+    ├── EditorToolBar.tsx        # Place/Erase/Paint + Undo/Redo/Clear
+    ├── ColorPalette.tsx         # 16プリセット色 + カスタムカラーピッカー
+    ├── GridSettings.tsx         # 1/5/10cm グリッドサイズ切替
+    ├── ShapeInfoPanel.tsx       # 名前/重量/寸法/ブロック数
+    └── ExportDialog.tsx         # JSON エクスポート/インポート
+```
+
+### ShapeData フォーマット
+
+エディタとシミュレータの間で形状データをやり取りする JSON フォーマット（`.shape.json`）:
+
+```typescript
+interface ShapeData {
+  version: 1
+  name: string
+  gridSize: number   // 1 | 5 | 10 cm/セル
+  blocks: ShapeBlock[]  // 圧縮済み矩形ブロック
+  weightKg: number
+}
+
+interface ShapeBlock {  // src/core/types.ts
+  x: number; y: number; z: number  // cm (形状原点からのオフセット)
+  w: number; h: number; d: number  // cm (ブロック寸法)
+  color: string                     // "#RRGGBB"
+}
+```
+
+### Core モジュール
+
+- **ShapeCompressor** (`src/core/ShapeCompressor.ts`): ボクセル→矩形ブロック圧縮。色ごとにグループ化し、X→Y→Z の貪欲拡張アルゴリズムで圧縮。`compressBlocks()` / `expandBlocks()` で可逆変換
+- **ShapeParser** (`src/core/ShapeParser.ts`): `validateShapeData()` でJSONバリデーション、`shapeToCargoItemDef()` でAABB自動計算→CargoItemDef変換
+
+### CargoItemDef 拡張 (複合形状対応)
+
+`CargoItemDef` に `blocks?: ShapeBlock[]` フィールドを追加（後方互換: undefined = 従来の直方体）。
+- **レンダリング**: 1配置 = N GPUインスタンス（ブロックごとに個別のmodel matrix + color）
+- **ボクセル化**: `voxelizeComposite()` で各ブロックを個別にボクセル化し union
+- **ピッキング**: 各ブロックの変換済みAABBを個別PickItemとして追加（同一instanceId）
+- **ゴースト**: D&D中に複合形状全体のゴーストプレビュー表示
+- **SaveLoad**: `blocks` フィールドをoptionalとしてバリデーション・保存・復元
+- **インポート**: `parseCargoJSON()` でShapeDataを自動検出し `shapeToCargoItemDef()` で変換
 
 ## Design Documents
 

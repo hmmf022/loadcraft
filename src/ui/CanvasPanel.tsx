@@ -3,7 +3,7 @@ import { Renderer } from '../renderer/Renderer'
 import { useAppStore } from '../state/store'
 import { pick, screenToRay, intersectRayPlane } from '../renderer/Raycaster'
 import type { PickItem } from '../renderer/Raycaster'
-import type { Vec3 } from '../core/types'
+import type { Vec3, CargoItemDef } from '../core/types'
 import { getVoxelGrid } from '../core/voxelGridSingleton'
 import { computeRotatedAABB, voxelize } from '../core/Voxelizer'
 import styles from './CanvasPanel.module.css'
@@ -17,10 +17,10 @@ const CAMERA_PRESETS: Record<string, { theta: number; phi: number }> = {
   isometric: { theta: Math.PI / 4,  phi: Math.PI / 4 },
 }
 
-/** Build AABB pick items from current placements (rotation-aware) */
+/** Build AABB pick items from current placements (rotation-aware, composite-aware) */
 function buildPickItems(): PickItem[] {
   const state = useAppStore.getState()
-  const defMap = new Map<string, { widthCm: number; heightCm: number; depthCm: number }>()
+  const defMap = new Map<string, CargoItemDef>()
   for (const d of state.cargoDefs) {
     defMap.set(d.id, d)
   }
@@ -28,11 +28,26 @@ function buildPickItems(): PickItem[] {
   for (const p of state.placements) {
     const def = defMap.get(p.cargoDefId)
     if (!def) continue
-    const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg, true)
-    items.push({
-      instanceId: p.instanceId,
-      aabb,
-    })
+
+    if (def.blocks) {
+      // Composite shape: add each block as a separate pick item (same instanceId)
+      for (const block of def.blocks) {
+        const blockAabb = computeRotatedAABB(
+          block.w, block.h, block.d,
+          {
+            x: p.positionCm.x + block.x,
+            y: p.positionCm.y + block.y,
+            z: p.positionCm.z + block.z,
+          },
+          p.rotationDeg,
+          true,
+        )
+        items.push({ instanceId: p.instanceId, aabb: blockAabb })
+      }
+    } else {
+      const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg, true)
+      items.push({ instanceId: p.instanceId, aabb })
+    }
   }
   return items
 }
@@ -622,7 +637,7 @@ export function CanvasPanel() {
     const rot = dragState.currentRotation
     const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot)
     const validity = getGhostValidity(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
-    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, validity, rot)
+    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, validity, rot, def.blocks)
     store.setDragState({ ...dragState, currentPosition: snapped, isValid: validity !== 'invalid' })
   }, [])
 

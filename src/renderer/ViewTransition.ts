@@ -3,6 +3,8 @@ import type { OrbitCamera } from './Camera'
 const DURATION = 300 // ms
 const TWO_PI = Math.PI * 2
 
+type Vec3 = { x: number; y: number; z: number }
+
 export class ViewTransition {
   private camera: OrbitCamera
   private active = false
@@ -11,16 +13,25 @@ export class ViewTransition {
   private fromPhi = 0
   private toTheta = 0
   private toPhi = 0
+  private fromTarget: Vec3 | null = null
+  private toTarget: Vec3 | null = null
 
   constructor(camera: OrbitCamera) {
     this.camera = camera
   }
 
-  transitionTo(theta: number, phi: number): void {
+  transitionTo(theta: number, phi: number, target?: Vec3): void {
     this.fromTheta = this.camera.theta
     this.fromPhi = this.camera.phi
     this.toTheta = theta
     this.toPhi = phi
+    if (target) {
+      this.fromTarget = { ...this.camera.target }
+      this.toTarget = target
+    } else {
+      this.fromTarget = null
+      this.toTarget = null
+    }
     this.startTime = performance.now()
     this.active = true
   }
@@ -36,7 +47,16 @@ export class ViewTransition {
     const theta = this.fromTheta + shortestAngleDelta(this.fromTheta, this.toTheta) * eased
     const phi = this.fromPhi + (this.toPhi - this.fromPhi) * eased
 
-    this.camera.setState({ theta, phi })
+    if (this.fromTarget && this.toTarget) {
+      const target = {
+        x: this.fromTarget.x + (this.toTarget.x - this.fromTarget.x) * eased,
+        y: this.fromTarget.y + (this.toTarget.y - this.fromTarget.y) * eased,
+        z: this.fromTarget.z + (this.toTarget.z - this.fromTarget.z) * eased,
+      }
+      this.camera.setState({ theta, phi, target })
+    } else {
+      this.camera.setState({ theta, phi })
+    }
 
     if (t >= 1) {
       this.active = false

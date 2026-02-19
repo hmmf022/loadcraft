@@ -100,6 +100,79 @@ export function intersectRayAABB(ray: Ray, aabb: AABB): number | null {
   return tmin >= 0 ? tmin : tmax
 }
 
+export interface FaceHit {
+  distance: number
+  point: Vec3
+  faceNormal: Vec3
+}
+
+/** Slab method ray-AABB intersection with face normal detection. */
+export function intersectRayAABBWithFace(ray: Ray, aabb: AABB): FaceHit | null {
+  let tmin = -Infinity
+  let tmax = Infinity
+  let tminAxis = -1
+  let tminSign = 1
+
+  // X slab
+  if (Math.abs(ray.direction.x) < 1e-10) {
+    if (ray.origin.x < aabb.min.x || ray.origin.x > aabb.max.x) return null
+  } else {
+    const invD = 1 / ray.direction.x
+    let t1 = (aabb.min.x - ray.origin.x) * invD
+    let t2 = (aabb.max.x - ray.origin.x) * invD
+    let sign = 1
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; sign = -1 }
+    if (t1 > tmin) { tmin = t1; tminAxis = 0; tminSign = sign }
+    tmax = Math.min(tmax, t2)
+    if (tmin > tmax) return null
+  }
+
+  // Y slab
+  if (Math.abs(ray.direction.y) < 1e-10) {
+    if (ray.origin.y < aabb.min.y || ray.origin.y > aabb.max.y) return null
+  } else {
+    const invD = 1 / ray.direction.y
+    let t1 = (aabb.min.y - ray.origin.y) * invD
+    let t2 = (aabb.max.y - ray.origin.y) * invD
+    let sign = 1
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; sign = -1 }
+    if (t1 > tmin) { tmin = t1; tminAxis = 1; tminSign = sign }
+    tmax = Math.min(tmax, t2)
+    if (tmin > tmax) return null
+  }
+
+  // Z slab
+  if (Math.abs(ray.direction.z) < 1e-10) {
+    if (ray.origin.z < aabb.min.z || ray.origin.z > aabb.max.z) return null
+  } else {
+    const invD = 1 / ray.direction.z
+    let t1 = (aabb.min.z - ray.origin.z) * invD
+    let t2 = (aabb.max.z - ray.origin.z) * invD
+    let sign = 1
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; sign = -1 }
+    if (t1 > tmin) { tmin = t1; tminAxis = 2; tminSign = sign }
+    tmax = Math.min(tmax, t2)
+    if (tmin > tmax) return null
+  }
+
+  if (tmax < 0) return null
+  const t = tmin >= 0 ? tmin : tmax
+
+  const point: Vec3 = {
+    x: ray.origin.x + ray.direction.x * t,
+    y: ray.origin.y + ray.direction.y * t,
+    z: ray.origin.z + ray.direction.z * t,
+  }
+
+  // Determine face normal from the axis that determined tmin
+  const faceNormal: Vec3 = { x: 0, y: 0, z: 0 }
+  if (tminAxis === 0) faceNormal.x = -tminSign
+  else if (tminAxis === 1) faceNormal.y = -tminSign
+  else faceNormal.z = -tminSign
+
+  return { distance: t, point, faceNormal }
+}
+
 export interface PickItem {
   instanceId: number
   aabb: AABB

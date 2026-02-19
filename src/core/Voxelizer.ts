@@ -1,4 +1,4 @@
-import type { Vec3 } from './types'
+import type { Vec3, ShapeBlock } from './types'
 
 export interface VoxelizeResult {
   voxels: Vec3[]
@@ -134,4 +134,99 @@ export function voxelize(
   }
 
   return { voxels, usesFastPath: false, aabb }
+}
+
+/**
+ * Voxelize a composite shape (multiple blocks) at a given position with rotation.
+ * Each block is individually voxelized and the results are unioned.
+ * Always uses slow path (returns voxel list).
+ */
+export function voxelizeComposite(
+  blocks: ShapeBlock[],
+  position: Vec3,
+  rotationDeg: Vec3,
+): VoxelizeResult {
+  if (blocks.length === 0) {
+    return { voxels: [], usesFastPath: false, aabb: { min: position, max: position } }
+  }
+
+  const rot = buildRotation3x3(rotationDeg)
+  const allVoxels: Vec3[] = []
+  const voxelSet = new Set<string>()
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+
+  for (const block of blocks) {
+    // Block corners in local shape space
+    const corners = [
+      [block.x, block.y, block.z],
+      [block.x + block.w, block.y, block.z],
+      [block.x, block.y + block.h, block.z],
+      [block.x, block.y, block.z + block.d],
+      [block.x + block.w, block.y + block.h, block.z],
+      [block.x + block.w, block.y, block.z + block.d],
+      [block.x, block.y + block.h, block.z + block.d],
+      [block.x + block.w, block.y + block.h, block.z + block.d],
+    ]
+
+    // Find block AABB in world space
+    let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity
+    let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity
+
+    for (const [cx, cy, cz] of corners) {
+      const p = rotatePoint(rot, cx!, cy!, cz!)
+      const px = p.x + position.x
+      const py = p.y + position.y
+      const pz = p.z + position.z
+      if (px < bMinX) bMinX = px; if (py < bMinY) bMinY = py; if (pz < bMinZ) bMinZ = pz
+      if (px > bMaxX) bMaxX = px; if (py > bMaxY) bMaxY = py; if (pz > bMaxZ) bMaxZ = pz
+    }
+
+    const snap = (v: number) => Math.abs(v - Math.round(v)) < 0.001 ? Math.round(v) : v
+    const vMinX = Math.floor(snap(bMinX)), vMinY = Math.floor(snap(bMinY)), vMinZ = Math.floor(snap(bMinZ))
+    const vMaxX = Math.ceil(snap(bMaxX)), vMaxY = Math.ceil(snap(bMaxY)), vMaxZ = Math.ceil(snap(bMaxZ))
+
+    // Update global AABB
+    if (vMinX < minX) minX = vMinX; if (vMinY < minY) minY = vMinY; if (vMinZ < minZ) minZ = vMinZ
+    if (vMaxX > maxX) maxX = vMaxX; if (vMaxY > maxY) maxY = vMaxY; if (vMaxZ > maxZ) maxZ = vMaxZ
+
+    // Build inverse rotation for containment test
+    const invRot = buildRotation3x3({ x: -rotationDeg.x, y: -rotationDeg.y, z: -rotationDeg.z })
+
+    // Enumerate voxels in block AABB
+    for (let vz = vMinZ; vz < vMaxZ; vz++) {
+      for (let vy = vMinY; vy < vMaxY; vy++) {
+        for (let vx = vMinX; vx < vMaxX; vx++) {
+          const key = `${vx},${vy},${vz}`
+          if (voxelSet.has(key)) continue
+
+          // Voxel center in world space, relative to position
+          const cx = vx + 0.5 - position.x
+          const cy = vy + 0.5 - position.y
+          const cz = vz + 0.5 - position.z
+
+          // Inverse-rotate to local shape space
+          const local = rotatePoint(invRot, cx, cy, cz)
+
+          // Check if inside this block [block.x, block.x+block.w] × etc
+          if (local.x >= block.x && local.x <= block.x + block.w &&
+              local.y >= block.y && local.y <= block.y + block.h &&
+              local.z >= block.z && local.z <= block.z + block.d) {
+            voxelSet.add(key)
+            allVoxels.push({ x: vx, y: vy, z: vz })
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    voxels: allVoxels,
+    usesFastPath: false,
+    aabb: {
+      min: { x: minX, y: minY, z: minZ },
+      max: { x: maxX, y: maxY, z: maxZ },
+    },
+  }
 }

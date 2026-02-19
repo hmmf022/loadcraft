@@ -103,6 +103,14 @@ export class OrbitCamera {
     return mat4Inverse(this.viewProjMatrix)
   }
 
+  setConstraints(opts: { minRadius?: number; maxRadius?: number; minPhi?: number; maxPhi?: number }): void {
+    if (opts.minRadius !== undefined) this.minRadius = opts.minRadius
+    if (opts.maxRadius !== undefined) this.maxRadius = opts.maxRadius
+    if (opts.minPhi !== undefined) this.minPhi = opts.minPhi
+    if (opts.maxPhi !== undefined) this.maxPhi = opts.maxPhi
+    this.dirty = true
+  }
+
   markDirty(): void {
     this.dirty = true
   }
