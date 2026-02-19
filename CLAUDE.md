@@ -40,7 +40,7 @@ UI action → Zustand store → VoxelGrid (collision) + History (undo)
 
 **Render Passes** (3-pass pipeline in `Renderer.render()`):
 1. Cargo — instanced draw, opaque, clears framebuffer
-2. Container walls — two sub-passes: back faces transparent (alpha=0.3), front faces opaque
+2. Container wireframe — `line-list` topology, 12 edges (8 vertices + 24 indices), single pipeline
 3. Floor grid — procedural via fract()/fwidth() in WGSL
 
 ### Initialization Order
@@ -65,9 +65,9 @@ Phase 1-2-3-4-5 完了。設計書 (`docs/`) は全Phase分の完全仕様を記
 - 1cm ステップで探索するが、回転荷物の自動配置は未実装
 - ※ D&D 経由の配置は `snapPosition` で回転対応済み
 
-**Container 壁メッシュ (`src/renderer/pipelines/ContainerPipeline.ts`)**:
-- 設計書では壁厚付き box (inner/outer faces) だが、現在は単純な 5 面ボックス（前面開口、壁厚なし）
-- 視覚的には問題ないが、内側から見たときの見え方が設計書と異なる
+**Container 描画 (`src/renderer/pipelines/ContainerPipeline.ts`)**:
+- 設計書では壁厚付き box (inner/outer faces) だが、内部視認性のためワイヤーフレーム（12辺 line-list）に変更済み
+- シェーダーは法線/ライティングなしの単色描画、パイプラインは1つに統合
 
 **カメラプリセット切替**:
 - Phase 5 で `ViewTransition` による 300ms ease-out アニメーション遷移を実装済み
@@ -86,7 +86,7 @@ Phase 1-2-3-4-5 完了。設計書 (`docs/`) は全Phase分の完全仕様を記
 
 設計書 `docs/02-core-engine.md` のモジュールはすべて実装済み。
 
-実装済み (Phase 3): ~~`Voxelizer`~~ (`src/core/Voxelizer.ts` — voxelize, isAxisAligned, computeRotatedAABB。高速パス/低速パス分岐)
+実装済み (Phase 3): ~~`Voxelizer`~~ (`src/core/Voxelizer.ts` — voxelize, isAxisAligned, computeRotatedAABB(exact フラグ対応)。高速パス/低速パス分岐)
 
 実装済み (Phase 4): ~~`WeightCalculator`~~ (`src/core/WeightCalculator.ts` — computeWeight, computeCogDeviation), ~~`GravityChecker`~~ (`src/core/GravityChecker.ts` — checkSupport, checkAllSupports。底面ボクセル走査、閾値0.8)
 
@@ -110,7 +110,8 @@ Phase 1-2-3-4-5 完了。設計書 (`docs/`) は全Phase分の完全仕様を記
 
 - **D&D 配置**: サイドバーからキャンバスへのドラッグ&ドロップ。`snapPosition` による重力スタッキング（VoxelGrid 下方走査で最初の空きYを検出）
 - **3D 選択**: クリックで荷物を選択（ray-AABB ピッキング）、選択ハイライト表示
-- **3D 移動**: 選択した荷物を右ドラッグで移動。ゴースト表示 + 衝突判定。移動中は自身を `excludeInstanceId` で除外
+- **3D 移動**: 選択した荷物を左ドラッグで移動。ゴースト表示 + 衝突判定。移動中は自身を `excludeInstanceId` で除外
+- **3D 自由回転**: Shift+左ドラッグで選択荷物を自由回転。水平→Y軸、垂直→X軸。回転時の床面クリッピングを自動補正
 - **選択ハイライト**: cargo シェーダで `selectedInstanceId` に一致するインスタンスを明るく表示
 - **PlacementControls**: 選択中荷物の情報パネル（名前・位置・寸法・重量）+ 削除/選択解除ボタン
 - **ToolBar**: キャンバス下部フローティングツールバー（Undo/Redo + 将来機能の disabled ボタン）
