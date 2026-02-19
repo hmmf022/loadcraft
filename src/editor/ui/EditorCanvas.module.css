@@ -62,3 +62,56 @@
   color: #fff;
   border-color: var(--accent);
 }
+
+.panPanel {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  pointer-events: none;
+  opacity: 0.6;
+  z-index: 10;
+}
+
+.panPanel:hover {
+  opacity: 1;
+}
+
+.panGrid {
+  display: grid;
+  grid-template-columns: 32px 32px 32px;
+  grid-template-rows: 32px 32px 32px;
+  grid-template-areas:
+    ".    up    ."
+    "left .     right"
+    ".    down  .";
+  gap: 2px;
+}
+
+.panBtn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+  touch-action: none;
+}
+
+.panBtn:hover {
+  background: var(--surface-hover, #333);
+  color: var(--text);
+}
+
+.panBtn:active {
+  background: var(--accent);
+  color: #fff;
+}

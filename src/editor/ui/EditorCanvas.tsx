@@ -220,6 +220,69 @@ export function EditorCanvas({ state, dispatch }: Props) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // Keyboard & D-pad pan
+  const pressedKeysRef = useRef(new Set<string>())
+  const PAN_SPEED = 3
+
+  useEffect(() => {
+    const PAN_KEYS = new Set(['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const target = e.target as HTMLElement
+      const isTextInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+      if (isTextInput) return
+      if (PAN_KEYS.has(e.key)) {
+        e.preventDefault()
+        pressedKeysRef.current.add(e.key)
+      }
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      pressedKeysRef.current.delete(e.key)
+    }
+    const handleBlur = () => {
+      pressedKeysRef.current.clear()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+
+    let rafId = 0
+    const tick = () => {
+      rafId = requestAnimationFrame(tick)
+      const keys = pressedKeysRef.current
+      if (keys.size === 0) return
+      const renderer = rendererRef.current
+      if (!renderer) return
+
+      let dx = 0
+      let dy = 0
+      if (keys.has('a') || keys.has('ArrowLeft'))  dx += PAN_SPEED
+      if (keys.has('d') || keys.has('ArrowRight')) dx -= PAN_SPEED
+      if (keys.has('w') || keys.has('ArrowUp'))    dy += PAN_SPEED
+      if (keys.has('s') || keys.has('ArrowDown'))  dy -= PAN_SPEED
+      if (dx !== 0 || dy !== 0) {
+        renderer.camera.pan(dx, dy)
+      }
+    }
+    rafId = requestAnimationFrame(tick)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+      cancelAnimationFrame(rafId)
+    }
+  }, [])
+
+  const panPointerDown = useCallback((dir: string) => {
+    pressedKeysRef.current.add(dir)
+  }, [])
+  const panPointerUp = useCallback((dir: string) => {
+    pressedKeysRef.current.delete(dir)
+  }, [])
+
   const handleViewPreset = (preset: typeof VIEW_PRESETS[number]) => {
     const renderer = rendererRef.current
     if (!renderer) return
@@ -244,6 +307,40 @@ export function EditorCanvas({ state, dispatch }: Props) {
               {p.name}
             </button>
           ))}
+        </div>
+      )}
+      {!loading && (
+        <div className={styles.panPanel}>
+          <div className={styles.panGrid}>
+            <button
+              className={styles.panBtn}
+              style={{ gridArea: 'up' }}
+              onPointerDown={() => panPointerDown('ArrowUp')}
+              onPointerUp={() => panPointerUp('ArrowUp')}
+              onPointerLeave={() => panPointerUp('ArrowUp')}
+            >&#9650;</button>
+            <button
+              className={styles.panBtn}
+              style={{ gridArea: 'left' }}
+              onPointerDown={() => panPointerDown('ArrowLeft')}
+              onPointerUp={() => panPointerUp('ArrowLeft')}
+              onPointerLeave={() => panPointerUp('ArrowLeft')}
+            >&#9664;</button>
+            <button
+              className={styles.panBtn}
+              style={{ gridArea: 'right' }}
+              onPointerDown={() => panPointerDown('ArrowRight')}
+              onPointerUp={() => panPointerUp('ArrowRight')}
+              onPointerLeave={() => panPointerUp('ArrowRight')}
+            >&#9654;</button>
+            <button
+              className={styles.panBtn}
+              style={{ gridArea: 'down' }}
+              onPointerDown={() => panPointerDown('ArrowDown')}
+              onPointerUp={() => panPointerUp('ArrowDown')}
+              onPointerLeave={() => panPointerUp('ArrowDown')}
+            >&#9660;</button>
+          </div>
         </div>
       )}
       {loading && (
