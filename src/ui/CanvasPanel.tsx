@@ -652,6 +652,61 @@ export function CanvasPanel() {
     return () => observer.disconnect()
   }, [])
 
+  // WASD / Arrow key pan
+  const pressedKeysRef = useRef(new Set<string>())
+  const PAN_SPEED = 3
+
+  useEffect(() => {
+    const PAN_KEYS = new Set(['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      if (PAN_KEYS.has(e.key)) {
+        e.preventDefault()
+        pressedKeysRef.current.add(e.key)
+      }
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      pressedKeysRef.current.delete(e.key)
+    }
+    const handleBlur = () => {
+      pressedKeysRef.current.clear()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+
+    let rafId = 0
+    const tick = () => {
+      rafId = requestAnimationFrame(tick)
+      const keys = pressedKeysRef.current
+      if (keys.size === 0) return
+      const renderer = rendererRef.current
+      if (!renderer) return
+
+      let dx = 0
+      let dy = 0
+      if (keys.has('a') || keys.has('ArrowLeft'))  dx += PAN_SPEED
+      if (keys.has('d') || keys.has('ArrowRight')) dx -= PAN_SPEED
+      if (keys.has('w') || keys.has('ArrowUp'))    dy += PAN_SPEED
+      if (keys.has('s') || keys.has('ArrowDown'))  dy -= PAN_SPEED
+      if (dx !== 0 || dy !== 0) {
+        renderer.camera.pan(dx, dy)
+      }
+    }
+    rafId = requestAnimationFrame(tick)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+      cancelAnimationFrame(rafId)
+    }
+  }, [])
+
   // Drag & Drop handlers
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
