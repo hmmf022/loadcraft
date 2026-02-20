@@ -8,6 +8,7 @@ export function PlacementControls() {
   const removePlacement = useAppStore((s) => s.removePlacement)
   const setSelectedInstanceId = useAppStore((s) => s.setSelectedInstanceId)
   const rotateCargo = useAppStore((s) => s.rotateCargo)
+  const dropCargo = useAppStore((s) => s.dropCargo)
 
   if (selectedInstanceId === null) {
     return (
@@ -82,6 +83,12 @@ export function PlacementControls() {
         </div>
 
         <div className={styles.actions}>
+          <button
+            className={styles.dropButton}
+            onClick={() => dropCargo(selectedInstanceId)}
+          >
+            落下
+          </button>
           <button
             className={styles.deleteButton}
             onClick={() => removePlacement(selectedInstanceId)}

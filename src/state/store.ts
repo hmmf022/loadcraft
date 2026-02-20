@@ -42,6 +42,7 @@ export interface AppState {
   removePlacement: (instanceId: number) => void
   moveCargo: (instanceId: number, newPosition: Vec3) => void
   rotateCargo: (instanceId: number, newRotation: Vec3) => void
+  dropCargo: (instanceId: number) => void
 
   // Selection
   selectedInstanceId: number | null
@@ -371,6 +372,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       renderVersion: state.renderVersion + 1,
       ...analytics,
     })
+  },
+
+  dropCargo: (instanceId) => {
+    const state = get()
+    const placement = state.placements.find((p) => p.instanceId === instanceId)
+    if (!placement) return
+
+    const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
+    if (!def) return
+
+    const grid = getVoxelGrid()
+    const pos = placement.positionCm
+    const rot = placement.rotationDeg
+
+    // Voxelize at current position and temporarily clear from grid
+    const oldResult = voxelizeCargo(def, pos, rot)
+    fillFromResult(grid, oldResult, 0)
+
+    // Scan from Y=0 upward to find the lowest valid position
+    let bestY = -1
+    for (let y = 0; y <= pos.y; y++) {
+      const testResult = voxelizeCargo(def, { x: pos.x, y, z: pos.z }, rot)
+      const { min, max } = testResult.aabb
+      if (min.x < 0 || min.y < 0 || min.z < 0) continue
+      if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) continue
+      if (checkCollision(grid, testResult, instanceId)) continue
+      bestY = y
+      break
+    }
+
+    // Restore grid
+    fillFromResult(grid, oldResult, instanceId)
+
+    // No valid position found, or already at lowest
+    if (bestY < 0 || bestY === pos.y) return
+
+    // Use moveCargo for undo/redo support
+    state.moveCargo(instanceId, { x: pos.x, y: bestY, z: pos.z })
   },
 
   // Selection

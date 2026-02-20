@@ -11,6 +11,7 @@ const HELP_ITEMS: { key: string; desc: string }[] = [
   { key: 'R / Shift+R', desc: 'Y軸回転 (+90° / -90°)' },
   { key: 'T / Shift+T', desc: 'X軸回転 (+90° / -90°)' },
   { key: 'F / Shift+F', desc: 'Z軸回転 (+90° / -90°)' },
+  { key: 'G', desc: '選択中の荷物を落下' },
   { key: 'Ctrl+Z / Ctrl+Y', desc: '元に戻す / やり直し' },
   { key: 'Delete', desc: '選択中の荷物を削除' },
   { key: 'Escape', desc: '選択解除' },

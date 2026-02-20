@@ -96,6 +96,11 @@ export function App() {
               })
             }
           }
+        } else if (e.key === 'g' || e.key === 'G') {
+          e.preventDefault()
+          if (!dragState && store.selectedInstanceId !== null) {
+            store.dropCargo(store.selectedInstanceId)
+          }
         }
       }
     }
