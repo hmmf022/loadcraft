@@ -227,10 +227,13 @@ interface ShapeBlock {  // src/core/types.ts
 
 ## Design Documents
 
-Detailed specs are in `docs/` (9 files). Key references:
+Detailed specs are in `docs/` (12 files). Key references:
 - `docs/01-data-structures.md` — All type definitions, coordinate system, voxel grid memory layout
 - `docs/02-core-engine.md` — VoxelGrid API, Voxelizer, History command pattern
 - `docs/03-rendering-engine.md` — WebGPU pipeline configs, shader structures, camera uniform layout (208 bytes), instance data format (80 bytes/instance)
 - `docs/04-state-management.md` — Full Zustand store interface, action flows, renderer integration
 - `docs/05-ui-components.md` — Component hierarchy, CSS modules, dark theme color scheme
 - `docs/08-development-roadmap.md` — 5 Phase ロードマップ、各Phase のステップ詳細
+- `docs/09-auto-placement-rotation.md` — 自動配置の回転対応
+- `docs/10-performance-improvements.md` — パフォーマンス改善（メモ化、キャッシュ、デバウンス、DOM最適化）
+- `docs/11-auto-packer.md` — 自動積み付けアルゴリズム（BLB + 回転探索、BatchCommand、UI）
