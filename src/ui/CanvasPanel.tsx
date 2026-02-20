@@ -171,7 +171,6 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
   const testAABB = computeRotatedAABB(widthCm, heightCm, depthCm, { x: 0, y: 0, z: 0 }, rotationDeg)
   const aabbW = testAABB.max.x - testAABB.min.x
   const aabbD = testAABB.max.z - testAABB.min.z
-  const aabbH = testAABB.max.y - testAABB.min.y
   // Offset from position origin to AABB min
   const offsetX = testAABB.min.x
   const offsetZ = testAABB.min.z
@@ -192,9 +191,14 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
 
   // Find the lowest valid Y by scanning from bottom up
   const grid = getVoxelGrid()
-  let bestY = 0
 
-  for (let y = 0; y + aabbH <= ch; y++) {
+  // Valid Y range: AABB must fit within [0, ch]
+  // AABB at position y occupies [y + testAABB.min.y, y + testAABB.max.y]
+  const minValidY = Math.max(0, Math.ceil(-testAABB.min.y))
+  const maxValidY = Math.floor(ch - testAABB.max.y)
+  let bestY = minValidY
+
+  for (let y = minValidY; y <= maxValidY; y++) {
     const testPos = { x, y, z }
     const result = blocks
       ? voxelizeComposite(blocks, testPos, rotationDeg)
@@ -203,6 +207,7 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
     if (min.x < 0 || min.y < 0 || min.z < 0) continue
     if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) continue
 
+    // Collision check
     let collision = false
     if (result.usesFastPath) {
       for (let vz = min.z; vz < max.z && !collision; vz++) {
@@ -219,7 +224,41 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
       collision = grid.hasCollision(result.voxels, excludeInstanceId)
     }
 
-    if (!collision) {
+    if (collision) continue
+
+    // Upper occlusion check: if objects exist above placement, it's a gap — skip
+    let hasObjectsAbove = false
+    if (result.usesFastPath) {
+      for (let gz = min.z; gz < max.z && !hasObjectsAbove; gz++) {
+        for (let gx = min.x; gx < max.x && !hasObjectsAbove; gx++) {
+          for (let gy = max.y; gy < grid.height; gy++) {
+            const val = grid.get(gx, gy, gz)
+            if (val !== 0 && val !== excludeInstanceId) {
+              hasObjectsAbove = true
+              break
+            }
+          }
+        }
+      }
+    } else {
+      // Composite shape: check above using actual voxel XZ coords (narrower than AABB)
+      const checked = new Set<string>()
+      for (const v of result.voxels) {
+        if (hasObjectsAbove) break
+        const key = `${v.x},${v.z}`
+        if (checked.has(key)) continue
+        checked.add(key)
+        for (let gy = max.y; gy < grid.height; gy++) {
+          const val = grid.get(v.x, gy, v.z)
+          if (val !== 0 && val !== excludeInstanceId) {
+            hasObjectsAbove = true
+            break
+          }
+        }
+      }
+    }
+
+    if (!hasObjectsAbove) {
       bestY = y
       break
     }
