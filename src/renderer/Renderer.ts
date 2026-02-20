@@ -7,7 +7,7 @@ import { createContainerPipelines } from './pipelines/ContainerPipeline'
 import { createGridPipeline } from './pipelines/GridPipeline'
 import { mat4Translation, mat4Scaling, mat4Multiply, mat4Identity, mat4RotationX, mat4RotationY, mat4RotationZ } from '../utils/math'
 import type { PlacedCargo, CargoItemDef, Vec3, ShapeBlock } from '../core/types'
-import { computeRotatedAABB } from '../core/Voxelizer'
+import { computeRotatedAABB, rotateVec3 } from '../core/Voxelizer'
 
 const DEG_TO_RAD = Math.PI / 180
 
@@ -436,7 +436,37 @@ export class Renderer {
     for (const p of placements) {
       const def = defMap.get(p.cargoDefId)
       if (!def) continue
-      const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
+      let aabb: { min: Vec3; max: Vec3 }
+      if (def.blocks) {
+        // Composite shape: compute union AABB of all rotated blocks
+        let minX = Infinity, minY = Infinity, minZ = Infinity
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+        for (const block of def.blocks) {
+          const rotatedOffset = rotateVec3(
+            { x: block.x, y: block.y, z: block.z },
+            p.rotationDeg,
+          )
+          const blockAabb = computeRotatedAABB(
+            block.w, block.h, block.d,
+            {
+              x: p.positionCm.x + rotatedOffset.x,
+              y: p.positionCm.y + rotatedOffset.y,
+              z: p.positionCm.z + rotatedOffset.z,
+            },
+            p.rotationDeg,
+            true,
+          )
+          minX = Math.min(minX, blockAabb.min.x)
+          minY = Math.min(minY, blockAabb.min.y)
+          minZ = Math.min(minZ, blockAabb.min.z)
+          maxX = Math.max(maxX, blockAabb.max.x)
+          maxY = Math.max(maxY, blockAabb.max.y)
+          maxZ = Math.max(maxZ, blockAabb.max.z)
+        }
+        aabb = { min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } }
+      } else {
+        aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg, true)
+      }
       labels.push({
         instanceId: p.instanceId,
         text: `${def.name} ${def.widthCm}x${def.heightCm}x${def.depthCm} ${def.weightKg}kg`,

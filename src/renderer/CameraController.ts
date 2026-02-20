@@ -84,11 +84,13 @@ export class CameraController {
           if (e.shiftKey) {
             this.rotateMode = true
             const rect = this.canvas.getBoundingClientRect()
-            this.onRotateStart?.(this.startX - rect.left, this.startY - rect.top)
+            const dpr = window.devicePixelRatio || 1
+            this.onRotateStart?.((this.startX - rect.left) * dpr, (this.startY - rect.top) * dpr)
           } else {
             this.moveMode = true
             const rect = this.canvas.getBoundingClientRect()
-            this.onMoveStart?.(this.startX - rect.left, this.startY - rect.top)
+            const dpr = window.devicePixelRatio || 1
+            this.onMoveStart?.((this.startX - rect.left) * dpr, (this.startY - rect.top) * dpr)
           }
         }
 
@@ -96,7 +98,8 @@ export class CameraController {
           this.onRotateDrag?.(dx, dy)
         } else if (this.moveMode) {
           const rect = this.canvas.getBoundingClientRect()
-          this.onMove?.(e.clientX - rect.left, e.clientY - rect.top)
+          const dpr = window.devicePixelRatio || 1
+          this.onMove?.((e.clientX - rect.left) * dpr, (e.clientY - rect.top) * dpr)
         } else {
           // Left button: orbit
           if (totalDist > this.clickThreshold) {
@@ -120,11 +123,13 @@ export class CameraController {
           this.onRotateEnd?.()
         } else if (this.moveMode) {
           const rect = this.canvas.getBoundingClientRect()
-          this.onMoveEnd?.(e.clientX - rect.left, e.clientY - rect.top)
+          const dpr = window.devicePixelRatio || 1
+          this.onMoveEnd?.((e.clientX - rect.left) * dpr, (e.clientY - rect.top) * dpr)
         } else if (totalDist < this.clickThreshold) {
           // Click detected
           const rect = this.canvas.getBoundingClientRect()
-          this.onClick?.(e.clientX - rect.left, e.clientY - rect.top)
+          const dpr = window.devicePixelRatio || 1
+          this.onClick?.((e.clientX - rect.left) * dpr, (e.clientY - rect.top) * dpr)
         }
       }
       this.isDragging = false

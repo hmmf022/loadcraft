@@ -26,11 +26,11 @@ function buildRotation3x3(rotDeg: Vec3): number[] {
   const cy = Math.cos(ry), sy = Math.sin(ry)
   const cz = Math.cos(rz), sz = Math.sin(rz)
 
-  // R = Rz * Rx * Ry (row-major)
+  // R = Rz * Rx * Ry (row-major, standard right-hand rotation)
   return [
-    cz * cy + sz * sx * sy,    sz * cx,   cz * (-sy) + sz * sx * cy,
-    -sz * cy + cz * sx * sy,   cz * cx,   sz * sy + cz * sx * cy,
-    cx * sy,                   -sx,        cx * cy,
+    cz * cy - sz * sx * sy,   -sz * cx,   cz * sy + sz * sx * cy,
+    sz * cy + cz * sx * sy,    cz * cx,   sz * sy - cz * sx * cy,
+    -cx * sy,                   sx,        cx * cy,
   ]
 }
 
@@ -109,7 +109,9 @@ export function voxelize(
   }
 
   // Slow path: enumerate voxels in AABB, check if center is inside the original box
-  const invRot = buildRotation3x3({ x: -rotationDeg.x, y: -rotationDeg.y, z: -rotationDeg.z })
+  // Inverse of orthogonal rotation matrix = transpose
+  const fwd = buildRotation3x3(rotationDeg)
+  const invRot = [fwd[0]!, fwd[3]!, fwd[6]!, fwd[1]!, fwd[4]!, fwd[7]!, fwd[2]!, fwd[5]!, fwd[8]!]
   const voxels: Vec3[] = []
 
   for (let vz = aabb.min.z; vz < aabb.max.z; vz++) {
@@ -191,8 +193,8 @@ export function voxelizeComposite(
     if (vMinX < minX) minX = vMinX; if (vMinY < minY) minY = vMinY; if (vMinZ < minZ) minZ = vMinZ
     if (vMaxX > maxX) maxX = vMaxX; if (vMaxY > maxY) maxY = vMaxY; if (vMaxZ > maxZ) maxZ = vMaxZ
 
-    // Build inverse rotation for containment test
-    const invRot = buildRotation3x3({ x: -rotationDeg.x, y: -rotationDeg.y, z: -rotationDeg.z })
+    // Inverse of orthogonal rotation matrix = transpose
+    const invRot = [rot[0]!, rot[3]!, rot[6]!, rot[1]!, rot[4]!, rot[7]!, rot[2]!, rot[5]!, rot[8]!]
 
     // Enumerate voxels in block AABB
     for (let vz = vMinZ; vz < vMaxZ; vz++) {
