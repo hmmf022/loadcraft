@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { useAppStore } from '../state/store'
 import { parseCargoFile } from '../core/ImportParser'
+import { loadCarPartsSamples } from '../data/loadCarPartsSamples'
 import styles from './CargoEditor.module.css'
 
 interface FormState {
@@ -77,6 +78,20 @@ export function CargoEditor() {
 
   const handleImportClick = () => {
     importInputRef.current?.click()
+  }
+
+  const handleLoadSamples = async () => {
+    try {
+      const defs = await loadCarPartsSamples()
+      if (defs.length > 0) {
+        importCargoDefs(defs)
+        addToast(`${defs.length}件のサンプルを読み込みました`, 'success')
+      } else {
+        addToast('サンプルの読み込みに失敗しました', 'error')
+      }
+    } catch {
+      addToast('サンプルの読み込みに失敗しました', 'error')
+    }
   }
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -182,6 +197,9 @@ export function CargoEditor() {
         </button>
         <button type="button" className={styles.importButton} onClick={handleImportClick}>
           インポート
+        </button>
+        <button type="button" className={styles.importButton} onClick={handleLoadSamples}>
+          サンプル
         </button>
         <input
           ref={importInputRef}

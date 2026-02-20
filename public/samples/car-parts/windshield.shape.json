@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "フロントガラス",
+  "gridSize": 1,
+  "weightKg": 12.0,
+  "blocks": [
+    { "x": 0, "y": 0, "z": 0, "w": 140, "h": 80, "d": 5, "color": "#5DADE2" }
+  ]
+}

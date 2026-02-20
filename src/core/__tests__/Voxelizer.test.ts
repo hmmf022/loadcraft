@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { voxelize, isAxisAligned, computeRotatedAABB } from '../Voxelizer'
+import { voxelize, isAxisAligned, computeRotatedAABB, rotateVec3 } from '../Voxelizer'
 
 describe('isAxisAligned', () => {
   it('returns true for 0/90/180/270/360/-90', () => {
@@ -46,6 +46,34 @@ describe('computeRotatedAABB', () => {
     expect(sizeX).toBe(10) // width unchanged
     expect(sizeY).toBeCloseTo(30, 0)
     expect(sizeZ).toBeCloseTo(20, 0)
+  })
+})
+
+describe('rotateVec3', () => {
+  it('identity rotation returns same vector', () => {
+    const v = rotateVec3({ x: 10, y: 20, z: 30 }, { x: 0, y: 0, z: 0 })
+    expect(v.x).toBeCloseTo(10)
+    expect(v.y).toBeCloseTo(20)
+    expect(v.z).toBeCloseTo(30)
+  })
+
+  it('Y 90° rotates X to +Z and Z to -X', () => {
+    const v1 = rotateVec3({ x: 10, y: 0, z: 0 }, { x: 0, y: 90, z: 0 })
+    expect(v1.x).toBeCloseTo(0)
+    expect(v1.y).toBeCloseTo(0)
+    expect(v1.z).toBeCloseTo(10)
+
+    const v2 = rotateVec3({ x: 0, y: 0, z: 10 }, { x: 0, y: 90, z: 0 })
+    expect(v2.x).toBeCloseTo(-10)
+    expect(v2.y).toBeCloseTo(0)
+    expect(v2.z).toBeCloseTo(0)
+  })
+
+  it('X 90° rotates Y to -Z', () => {
+    const v = rotateVec3({ x: 0, y: 10, z: 0 }, { x: 90, y: 0, z: 0 })
+    expect(v.x).toBeCloseTo(0)
+    expect(v.y).toBeCloseTo(0)
+    expect(v.z).toBeCloseTo(-10)
   })
 })
 

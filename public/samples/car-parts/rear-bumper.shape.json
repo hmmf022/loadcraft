@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "リアバンパー",
+  "gridSize": 1,
+  "weightKg": 4.5,
+  "blocks": [
+    { "x": 0, "y": 0, "z": 0, "w": 180, "h": 25, "d": 18, "color": "#E74C3C" }
+  ]
+}

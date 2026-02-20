@@ -315,7 +315,7 @@ export class Renderer {
     })
   }
 
-  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, validity: 'valid' | 'invalid' | 'floating', rotationDeg?: Vec3, blocks?: ShapeBlock[]): void {
+  updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, validity: 'valid' | 'invalid' | 'floating' | 'force', rotationDeg?: Vec3, blocks?: ShapeBlock[]): void {
     if (!position) {
       this.ghostVisible = false
       this.ghostInstanceCount = 0
@@ -330,6 +330,8 @@ export class Renderer {
       ghostColor = [0.3, 0.8, 0.3, 0.4]
     } else if (validity === 'floating') {
       ghostColor = [0.9, 0.8, 0.2, 0.4]
+    } else if (validity === 'force') {
+      ghostColor = [1.0, 0.6, 0.1, 0.4]
     } else {
       ghostColor = [0.9, 0.2, 0.2, 0.4]
     }

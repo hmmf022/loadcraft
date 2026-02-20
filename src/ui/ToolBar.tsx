@@ -14,6 +14,8 @@ export function ToolBar() {
   const toggleGrid = useAppStore((s) => s.toggleGrid)
   const showLabels = useAppStore((s) => s.showLabels)
   const toggleLabels = useAppStore((s) => s.toggleLabels)
+  const forceMode = useAppStore((s) => s.forceMode)
+  const toggleForceMode = useAppStore((s) => s.toggleForceMode)
   const snapToGrid = useAppStore((s) => s.snapToGrid)
   const toggleSnap = useAppStore((s) => s.toggleSnap)
   const gridSizeCm = useAppStore((s) => s.gridSizeCm)
@@ -92,6 +94,12 @@ export function ToolBar() {
         onClick={toggleLabels}
       >
         Labels
+      </button>
+      <button
+        className={`${styles.button} ${forceMode ? styles.forceActive : ''}`}
+        onClick={toggleForceMode}
+      >
+        Force
       </button>
       {snapToGrid && (
         <select

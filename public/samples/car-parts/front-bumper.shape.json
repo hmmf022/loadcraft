@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "フロントバンパー",
+  "gridSize": 1,
+  "weightKg": 5.0,
+  "blocks": [
+    { "x": 0, "y": 0, "z": 0, "w": 180, "h": 30, "d": 20, "color": "#C0392B" }
+  ]
+}

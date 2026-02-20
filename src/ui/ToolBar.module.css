@@ -53,6 +53,17 @@
   opacity: 0.9;
 }
 
+.forceActive {
+  background: #e67e22;
+  color: #fff;
+  border-color: #e67e22;
+}
+
+.forceActive:hover:not(:disabled) {
+  background: #d35400;
+  border-color: #d35400;
+}
+
 .snapSelect {
   padding: 4px 6px;
   background: var(--input-bg);

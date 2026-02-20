@@ -5,7 +5,7 @@ import { pick, screenToRay, intersectRayPlane } from '../renderer/Raycaster'
 import type { PickItem } from '../renderer/Raycaster'
 import type { Vec3, CargoItemDef } from '../core/types'
 import { getVoxelGrid } from '../core/voxelGridSingleton'
-import { computeRotatedAABB, voxelize } from '../core/Voxelizer'
+import { computeRotatedAABB, voxelize, voxelizeComposite, rotateVec3 } from '../core/Voxelizer'
 import styles from './CanvasPanel.module.css'
 
 const CAMERA_PRESETS: Record<string, { theta: number; phi: number }> = {
@@ -32,12 +32,16 @@ function buildPickItems(): PickItem[] {
     if (def.blocks) {
       // Composite shape: add each block as a separate pick item (same instanceId)
       for (const block of def.blocks) {
+        const rotatedOffset = rotateVec3(
+          { x: block.x, y: block.y, z: block.z },
+          p.rotationDeg,
+        )
         const blockAabb = computeRotatedAABB(
           block.w, block.h, block.d,
           {
-            x: p.positionCm.x + block.x,
-            y: p.positionCm.y + block.y,
-            z: p.positionCm.z + block.z,
+            x: p.positionCm.x + rotatedOffset.x,
+            y: p.positionCm.y + rotatedOffset.y,
+            z: p.positionCm.z + rotatedOffset.z,
           },
           p.rotationDeg,
           true,
@@ -50,6 +54,15 @@ function buildPickItems(): PickItem[] {
     }
   }
   return items
+}
+
+/** Check if a position is within container bounds (no collision check) */
+function isInBounds(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3): boolean {
+  const grid = getVoxelGrid()
+  const roundedPos = { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) }
+  const { min, max } = voxelize(widthCm, heightCm, depthCm, roundedPos, rotationDeg).aabb
+  return min.x >= 0 && min.y >= 0 && min.z >= 0 &&
+         max.x <= grid.width && max.y <= grid.height && max.z <= grid.depth
 }
 
 /** Check if a position is valid for placing cargo (rotation-aware) */
@@ -79,9 +92,10 @@ function isValidPosition(pos: Vec3, widthCm: number, heightCm: number, depthCm: 
   }
 }
 
-/** Determine ghost validity: 'invalid' if collision, 'floating' if unsupported, 'valid' otherwise */
-function getGhostValidity(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): 'valid' | 'invalid' | 'floating' {
+/** Determine ghost validity: 'invalid' if collision, 'floating' if unsupported, 'valid' otherwise, 'force' if force mode allows */
+function getGhostValidity(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): 'valid' | 'invalid' | 'floating' | 'force' {
   if (!isValidPosition(pos, widthCm, heightCm, depthCm, rotationDeg, excludeInstanceId)) {
+    if (useAppStore.getState().forceMode && isInBounds(pos, widthCm, heightCm, depthCm, rotationDeg)) return 'force'
     return 'invalid'
   }
   const aabb = computeRotatedAABB(widthCm, heightCm, depthCm, pos, rotationDeg)
@@ -307,14 +321,18 @@ export function CanvasPanel() {
     let newPos = origPos
     if (floorHit) {
       const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
-      if (isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)) {
+      if (useAppStore.getState().forceMode
+        ? isInBounds(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
+        : isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)) {
         newPos = snapped
       }
     }
 
     // Restore the grid at original position first (moveCargo will handle the rest)
     const grid = getVoxelGrid()
-    const result = voxelize(def.widthCm, def.heightCm, def.depthCm, origPos, rot)
+    const result = def.blocks
+      ? voxelizeComposite(def.blocks, origPos, rot)
+      : voxelize(def.widthCm, def.heightCm, def.depthCm, origPos, rot)
     if (result.usesFastPath) {
       const { min, max } = result.aabb
       grid.fillBox(min.x, min.y, min.z, max.x - 1, max.y - 1, max.z - 1, movingId)
@@ -378,15 +396,8 @@ export function CanvasPanel() {
     curr.y += dx * ROTATION_SENSITIVITY
     curr.x -= dy * ROTATION_SENSITIVITY
 
-    // Auto-adjust Y position if rotation causes floor clipping
-    let pos = origPos
-    const testAABB = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, pos, curr)
-    if (testAABB.min.y < 0) {
-      pos = { ...pos, y: pos.y - testAABB.min.y }
-    }
-
-    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, curr, rotatingId)
-    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, curr)
+    const validity = getGhostValidity(origPos, def.widthCm, def.heightCm, def.depthCm, curr, rotatingId)
+    renderer.updateGhost(origPos, def.widthCm, def.heightCm, def.depthCm, validity, curr)
   }, [])
 
   const handleRotateEnd = useCallback(() => {
@@ -420,7 +431,9 @@ export function CanvasPanel() {
 
     // Restore the grid at original position/rotation first
     const grid = getVoxelGrid()
-    const restoreResult = voxelize(def.widthCm, def.heightCm, def.depthCm, origPos, origRot)
+    const restoreResult = def.blocks
+      ? voxelizeComposite(def.blocks, origPos, origRot)
+      : voxelize(def.widthCm, def.heightCm, def.depthCm, origPos, origRot)
     if (restoreResult.usesFastPath) {
       const { min, max } = restoreResult.aabb
       grid.fillBox(min.x, min.y, min.z, max.x - 1, max.y - 1, max.z - 1, rotatingId)
@@ -431,14 +444,9 @@ export function CanvasPanel() {
     // Check if rotation actually changed
     const rotChanged = currRot.x !== origRot.x || currRot.y !== origRot.y || currRot.z !== origRot.z
     if (rotChanged) {
-      // Auto-adjust Y position if needed
-      let newPos = origPos
-      const testAABB = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, origPos, currRot)
-      if (testAABB.min.y < 0) {
-        newPos = { ...origPos, y: origPos.y - testAABB.min.y }
-      }
-
-      if (isValidPosition(newPos, def.widthCm, def.heightCm, def.depthCm, currRot, rotatingId)) {
+      if (useAppStore.getState().forceMode
+        ? isInBounds(origPos, def.widthCm, def.heightCm, def.depthCm, currRot)
+        : isValidPosition(origPos, def.widthCm, def.heightCm, def.depthCm, currRot, rotatingId)) {
         store.rotateCargo(rotatingId, currRot)
       }
     }
@@ -676,7 +684,9 @@ export function CanvasPanel() {
 
     if (floorHit) {
       const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot)
-      if (isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot)) {
+      if (useAppStore.getState().forceMode
+        ? isInBounds(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
+        : isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot)) {
         store.placeCargo(cargoDefId, snapped, rot)
       }
     }

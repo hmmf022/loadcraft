@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "ホイール",
+  "gridSize": 1,
+  "weightKg": 9.0,
+  "blocks": [
+    { "x": 0, "y": 0, "z": 0, "w": 42, "h": 42, "d": 20, "color": "#BDC3C7" }
+  ]
+}

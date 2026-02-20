@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "ボンネット",
+  "gridSize": 1,
+  "weightKg": 10.0,
+  "blocks": [
+    { "x": 0, "y": 0, "z": 0, "w": 140, "h": 10, "d": 100, "color": "#27AE60" }
+  ]
+}

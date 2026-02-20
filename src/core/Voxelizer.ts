@@ -230,3 +230,9 @@ export function voxelizeComposite(
     },
   }
 }
+
+/** Rotate a Vec3 by Y-X-Z Euler angles (same rotation order used throughout the engine) */
+export function rotateVec3(v: Vec3, rotationDeg: Vec3): Vec3 {
+  const m = buildRotation3x3(rotationDeg)
+  return rotatePoint(m, v.x, v.y, v.z)
+}
