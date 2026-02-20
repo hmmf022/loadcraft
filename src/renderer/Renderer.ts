@@ -209,14 +209,18 @@ export class Renderer {
     this.containerIndexBuffer = container.indexBuffer
     this.containerIndexCount = container.indexCount
 
-    // Container uniforms - wireframe color
+    // Container uniforms - wireframe color + resolution/lineWidth
     this.containerUniformBuffer = this.device.createBuffer({
-      size: 80, // mat4x4 + vec4
+      size: 96, // mat4x4(64) + vec4(16) + vec2(8) + f32(4) + pad(4)
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     })
-    const uniformData = new Float32Array(20)
+    const uniformData = new Float32Array(24)
     uniformData.set(mat4Identity(), 0) // model matrix = identity
-    uniformData.set([0.5, 0.55, 0.6, 0.7], 16) // semi-transparent gray
+    uniformData.set([0.75, 0.8, 0.85, 0.9], 16) // brighter semi-transparent gray
+    uniformData[20] = this.canvas.width || 1   // resolution.x
+    uniformData[21] = this.canvas.height || 1  // resolution.y
+    uniformData[22] = 2.0                      // lineWidth (pixels)
+    uniformData[23] = 0                        // padding
     this.device.queue.writeBuffer(this.containerUniformBuffer, 0, uniformData)
 
     this.containerBindGroup = this.device.createBindGroup({
@@ -394,9 +398,13 @@ export class Renderer {
     this.containerIndexCount = container.indexCount
 
     // Update container uniforms
-    const uniformData = new Float32Array(20)
+    const uniformData = new Float32Array(24)
     uniformData.set(mat4Identity(), 0)
-    uniformData.set([0.5, 0.55, 0.6, 0.7], 16)
+    uniformData.set([0.75, 0.8, 0.85, 0.9], 16)
+    uniformData[20] = this.canvas.width || 1
+    uniformData[21] = this.canvas.height || 1
+    uniformData[22] = 2.0
+    uniformData[23] = 0
     this.device.queue.writeBuffer(this.containerUniformBuffer, 0, uniformData)
 
     // Update camera target to center of new container
@@ -410,6 +418,9 @@ export class Renderer {
     this.depthTexture.destroy()
     this.createDepthTexture()
     this.camera.setAspect(width / height)
+    // Update container uniform resolution
+    const res = new Float32Array([width, height])
+    this.device.queue.writeBuffer(this.containerUniformBuffer, 80, res)
   }
 
   animateToPreset(theta: number, phi: number): void {
