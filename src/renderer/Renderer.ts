@@ -2,6 +2,7 @@ import { OrbitCamera, CAMERA_UNIFORM_SIZE } from './Camera'
 import { CameraController } from './CameraController'
 import { ViewTransition } from './ViewTransition'
 import { LabelRenderer } from './LabelRenderer'
+import { AxisIndicator } from './AxisIndicator'
 import { createCargoPipeline, createGhostPipeline, INSTANCE_BYTE_SIZE } from './pipelines/CargoPipeline'
 import { createContainerPipelines } from './pipelines/ContainerPipeline'
 import { createGridPipeline } from './pipelines/GridPipeline'
@@ -123,6 +124,9 @@ export class Renderer {
   // Labels
   private labelRenderer: LabelRenderer | null = null
   showLabels = true
+
+  // Axis indicator
+  private axisIndicator: AxisIndicator | null = null
 
   constructor() {
     this.camera = new OrbitCamera()
@@ -435,6 +439,10 @@ export class Renderer {
     this.labelRenderer = new LabelRenderer(parentElement)
   }
 
+  initAxisIndicator(parentElement: HTMLElement): void {
+    this.axisIndicator = new AxisIndicator(parentElement)
+  }
+
   updateLabels(placements: PlacedCargo[], cargoDefs: CargoItemDef[]): void {
     if (!this.labelRenderer) return
 
@@ -607,6 +615,11 @@ export class Renderer {
       this.labelRenderer.project(vpMatrix, camPos, this.canvas.width, this.canvas.height, dpr)
     }
 
+    // Update axis indicator
+    if (this.axisIndicator) {
+      this.axisIndicator.update(cameraData.subarray(16, 32))
+    }
+
     this.animationId = requestAnimationFrame(this.render)
   }
 
@@ -624,6 +637,7 @@ export class Renderer {
     this.stopRenderLoop()
     this.cameraController?.dispose()
     this.labelRenderer?.dispose()
+    this.axisIndicator?.dispose()
     this.cameraUniformBuffer?.destroy()
     this.cargoVertexBuffer?.destroy()
     this.cargoIndexBuffer?.destroy()

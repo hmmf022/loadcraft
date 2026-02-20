@@ -511,6 +511,7 @@ export function CanvasPanel() {
       // Initialize label renderer
       if (containerRef.current) {
         renderer.initLabels(containerRef.current)
+        renderer.initAxisIndicator(containerRef.current)
       }
 
       // Set up click, move, and rotate callbacks
