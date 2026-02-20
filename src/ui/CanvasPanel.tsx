@@ -224,41 +224,7 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
       collision = grid.hasCollision(result.voxels, excludeInstanceId)
     }
 
-    if (collision) continue
-
-    // Upper occlusion check: if objects exist above placement, it's a gap — skip
-    let hasObjectsAbove = false
-    if (result.usesFastPath) {
-      for (let gz = min.z; gz < max.z && !hasObjectsAbove; gz++) {
-        for (let gx = min.x; gx < max.x && !hasObjectsAbove; gx++) {
-          for (let gy = max.y; gy < grid.height; gy++) {
-            const val = grid.get(gx, gy, gz)
-            if (val !== 0 && val !== excludeInstanceId) {
-              hasObjectsAbove = true
-              break
-            }
-          }
-        }
-      }
-    } else {
-      // Composite shape: check above using actual voxel XZ coords (narrower than AABB)
-      const checked = new Set<string>()
-      for (const v of result.voxels) {
-        if (hasObjectsAbove) break
-        const key = `${v.x},${v.z}`
-        if (checked.has(key)) continue
-        checked.add(key)
-        for (let gy = max.y; gy < grid.height; gy++) {
-          const val = grid.get(v.x, gy, v.z)
-          if (val !== 0 && val !== excludeInstanceId) {
-            hasObjectsAbove = true
-            break
-          }
-        }
-      }
-    }
-
-    if (!hasObjectsAbove) {
+    if (!collision) {
       bestY = y
       break
     }
