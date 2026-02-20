@@ -68,29 +68,31 @@ export function App() {
           }
         } else if (e.key === 't' || e.key === 'T') {
           e.preventDefault()
+          const delta = e.shiftKey ? -90 : 90
           if (dragState) {
             const rot = dragState.currentRotation
-            store.setDragState({ ...dragState, currentRotation: { ...rot, x: rot.x + 90 } })
+            store.setDragState({ ...dragState, currentRotation: { ...rot, x: rot.x + delta } })
           } else if (store.selectedInstanceId !== null) {
             const placement = store.placements.find((p) => p.instanceId === store.selectedInstanceId)
             if (placement) {
               store.rotateCargo(store.selectedInstanceId, {
                 ...placement.rotationDeg,
-                x: placement.rotationDeg.x + 90,
+                x: placement.rotationDeg.x + delta,
               })
             }
           }
         } else if (e.key === 'f' || e.key === 'F') {
           e.preventDefault()
+          const delta = e.shiftKey ? -90 : 90
           if (dragState) {
             const rot = dragState.currentRotation
-            store.setDragState({ ...dragState, currentRotation: { ...rot, z: rot.z + 90 } })
+            store.setDragState({ ...dragState, currentRotation: { ...rot, z: rot.z + delta } })
           } else if (store.selectedInstanceId !== null) {
             const placement = store.placements.find((p) => p.instanceId === store.selectedInstanceId)
             if (placement) {
               store.rotateCargo(store.selectedInstanceId, {
                 ...placement.rotationDeg,
-                z: placement.rotationDeg.z + 90,
+                z: placement.rotationDeg.z + delta,
               })
             }
           }

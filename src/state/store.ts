@@ -308,12 +308,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     const oldRot = placement.rotationDeg
 
     const oldResult = voxelizeCargo(def, pos, oldRot)
-    const newResult = voxelizeCargo(def, pos, newRotation)
+    let newPos = pos
+    let newResult = voxelizeCargo(def, newPos, newRotation)
 
-    // Bounds check — reject rotation if AABB exceeds container
+    // Auto-correct: shift position to keep AABB within container
     const { min, max } = newResult.aabb
-    if (min.x < 0 || min.y < 0 || min.z < 0) return
-    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return
+    let dx = 0, dy = 0, dz = 0
+    if (min.x < 0) dx = -min.x
+    else if (max.x > grid.width) dx = grid.width - max.x
+    if (min.y < 0) dy = -min.y
+    else if (max.y > grid.height) dy = grid.height - max.y
+    if (min.z < 0) dz = -min.z
+    else if (max.z > grid.depth) dz = grid.depth - max.z
+
+    if (dx !== 0 || dy !== 0 || dz !== 0) {
+      newPos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
+      newResult = voxelizeCargo(def, newPos, newRotation)
+      // Re-check after correction (object may be larger than container)
+      const { min: m2, max: x2 } = newResult.aabb
+      if (m2.x < 0 || m2.y < 0 || m2.z < 0 ||
+          x2.x > grid.width || x2.y > grid.height || x2.z > grid.depth) {
+        get().addToast('回転後のサイズがコンテナに収まりません', 'error')
+        return
+      }
+    }
 
     // Collision check: clear old, test new (skip collision check in force mode)
     fillFromResult(grid, oldResult, 0)
@@ -322,6 +340,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (hasCollision) {
         // Restore old
         fillFromResult(grid, oldResult, instanceId)
+        get().addToast('他の荷物と衝突するため回転できません', 'error')
         return
       }
     }
@@ -330,7 +349,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const updatedPlacement: PlacedCargo = {
       ...placement,
-      positionCm: pos,
+      positionCm: newPos,
       rotationDeg: newRotation,
     }
 

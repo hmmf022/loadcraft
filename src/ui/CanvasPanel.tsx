@@ -3,7 +3,7 @@ import { Renderer } from '../renderer/Renderer'
 import { useAppStore } from '../state/store'
 import { pick, screenToRay, intersectRayPlane } from '../renderer/Raycaster'
 import type { PickItem } from '../renderer/Raycaster'
-import type { Vec3, CargoItemDef } from '../core/types'
+import type { Vec3, CargoItemDef, ShapeBlock } from '../core/types'
 import { getVoxelGrid } from '../core/voxelGridSingleton'
 import { computeRotatedAABB, voxelize, voxelizeComposite, rotateVec3 } from '../core/Voxelizer'
 import styles from './CanvasPanel.module.css'
@@ -57,19 +57,24 @@ function buildPickItems(): PickItem[] {
 }
 
 /** Check if a position is within container bounds (no collision check) */
-function isInBounds(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3): boolean {
+function isInBounds(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, blocks?: ShapeBlock[]): boolean {
   const grid = getVoxelGrid()
   const roundedPos = { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) }
-  const { min, max } = voxelize(widthCm, heightCm, depthCm, roundedPos, rotationDeg).aabb
+  const { min, max } = (blocks
+    ? voxelizeComposite(blocks, roundedPos, rotationDeg)
+    : voxelize(widthCm, heightCm, depthCm, roundedPos, rotationDeg)
+  ).aabb
   return min.x >= 0 && min.y >= 0 && min.z >= 0 &&
          max.x <= grid.width && max.y <= grid.height && max.z <= grid.depth
 }
 
-/** Check if a position is valid for placing cargo (rotation-aware) */
-function isValidPosition(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): boolean {
+/** Check if a position is valid for placing cargo (rotation-aware, composite-aware) */
+function isValidPosition(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number, blocks?: ShapeBlock[]): boolean {
   const grid = getVoxelGrid()
   const roundedPos = { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) }
-  const result = voxelize(widthCm, heightCm, depthCm, roundedPos, rotationDeg)
+  const result = blocks
+    ? voxelizeComposite(blocks, roundedPos, rotationDeg)
+    : voxelize(widthCm, heightCm, depthCm, roundedPos, rotationDeg)
 
   // Bounds check
   const { min, max } = result.aabb
@@ -93,21 +98,54 @@ function isValidPosition(pos: Vec3, widthCm: number, heightCm: number, depthCm: 
 }
 
 /** Determine ghost validity: 'invalid' if collision, 'floating' if unsupported, 'valid' otherwise, 'force' if force mode allows */
-function getGhostValidity(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): 'valid' | 'invalid' | 'floating' | 'force' {
-  if (!isValidPosition(pos, widthCm, heightCm, depthCm, rotationDeg, excludeInstanceId)) {
-    if (useAppStore.getState().forceMode && isInBounds(pos, widthCm, heightCm, depthCm, rotationDeg)) return 'force'
+function getGhostValidity(pos: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number, blocks?: ShapeBlock[]): 'valid' | 'invalid' | 'floating' | 'force' {
+  if (!isValidPosition(pos, widthCm, heightCm, depthCm, rotationDeg, excludeInstanceId, blocks)) {
+    if (useAppStore.getState().forceMode && isInBounds(pos, widthCm, heightCm, depthCm, rotationDeg, blocks)) return 'force'
     return 'invalid'
   }
+
+  if (blocks) {
+    // Composite shape: use actual voxels for support check
+    const roundedPos = { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) }
+    const result = voxelizeComposite(blocks, roundedPos, rotationDeg)
+    if (result.aabb.min.y === 0) return 'valid' // on floor
+
+    // Group voxels by (x,z) and find the minimum y for each column
+    const grid = getVoxelGrid()
+    const columnMinY = new Map<string, number>()
+    for (const v of result.voxels) {
+      const key = `${v.x},${v.z}`
+      const prev = columnMinY.get(key)
+      if (prev === undefined || v.y < prev) {
+        columnMinY.set(key, v.y)
+      }
+    }
+
+    let totalBottom = 0
+    let supportedBottom = 0
+    for (const [key, minY] of columnMinY) {
+      const [xStr, zStr] = key.split(',')
+      const x = Number(xStr)
+      const z = Number(zStr)
+      totalBottom++
+      const below = grid.get(x, minY - 1, z)
+      if (below !== 0 && below !== excludeInstanceId) {
+        supportedBottom++
+      }
+    }
+    if (totalBottom === 0) return 'floating'
+    return (supportedBottom / totalBottom) >= 0.8 ? 'valid' : 'floating'
+  }
+
+  // Simple box: use AABB-based check
   const aabb = computeRotatedAABB(widthCm, heightCm, depthCm, pos, rotationDeg)
   if (aabb.min.y === 0) return 'valid' // on floor
 
-  // Check if there's support below the bottom voxels
   const grid = getVoxelGrid()
   let totalBottom = 0
   let supportedBottom = 0
   for (let z = aabb.min.z; z < aabb.max.z; z++) {
     for (let x = aabb.min.x; x < aabb.max.x; x++) {
-      // Check if this is a bottom voxel of the object
       const below = grid.get(x, aabb.min.y - 1, z)
       if (below !== 0 && below !== excludeInstanceId) {
         supportedBottom++
@@ -123,7 +161,7 @@ function getGhostValidity(pos: Vec3, widthCm: number, heightCm: number, depthCm:
  * Snap position: determine X,Z from hit point, then find the lowest valid Y
  * (gravity stacking — cargo drops down and lands on top of existing items)
  */
-function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number): Vec3 {
+function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number, blocks?: ShapeBlock[]): Vec3 {
   const state = useAppStore.getState()
   const cw = state.container.widthCm
   const ch = state.container.heightCm
@@ -158,7 +196,9 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
 
   for (let y = 0; y + aabbH <= ch; y++) {
     const testPos = { x, y, z }
-    const result = voxelize(widthCm, heightCm, depthCm, testPos, rotationDeg)
+    const result = blocks
+      ? voxelizeComposite(blocks, testPos, rotationDeg)
+      : voxelize(widthCm, heightCm, depthCm, testPos, rotationDeg)
     const { min, max } = result.aabb
     if (min.x < 0 || min.y < 0 || min.z < 0) continue
     if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) continue
@@ -251,8 +291,8 @@ export function CanvasPanel() {
     // Show ghost at current position
     const pos = placement.positionCm
     const rot = placement.rotationDeg
-    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId)
-    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, rot)
+    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId, def.blocks)
+    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, rot, def.blocks)
   }, [])
 
   const handleMove = useCallback((screenX: number, screenY: number) => {
@@ -276,9 +316,9 @@ export function CanvasPanel() {
     const floorHit = intersectRayPlane(ray, 0)
     if (!floorHit) return
 
-    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
-    const validity = getGhostValidity(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
-    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, validity, rot)
+    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId, def.blocks)
+    const validity = getGhostValidity(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId, def.blocks)
+    renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, validity, rot, def.blocks)
   }, [])
 
   const handleMoveEnd = useCallback((screenX: number, screenY: number) => {
@@ -320,10 +360,10 @@ export function CanvasPanel() {
 
     let newPos = origPos
     if (floorHit) {
-      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId)
+      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, movingId, def.blocks)
       if (useAppStore.getState().forceMode
-        ? isInBounds(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
-        : isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId)) {
+        ? isInBounds(snapped, def.widthCm, def.heightCm, def.depthCm, rot, def.blocks)
+        : isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, movingId, def.blocks)) {
         newPos = snapped
       }
     }
@@ -373,8 +413,8 @@ export function CanvasPanel() {
     // Show ghost at current position/rotation
     const pos = placement.positionCm
     const rot = placement.rotationDeg
-    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId)
-    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, rot)
+    const validity = getGhostValidity(pos, def.widthCm, def.heightCm, def.depthCm, rot, selectedId, def.blocks)
+    renderer.updateGhost(pos, def.widthCm, def.heightCm, def.depthCm, validity, rot, def.blocks)
   }, [])
 
   const handleRotateDrag = useCallback((dx: number, dy: number) => {
@@ -396,8 +436,8 @@ export function CanvasPanel() {
     curr.y += dx * ROTATION_SENSITIVITY
     curr.x -= dy * ROTATION_SENSITIVITY
 
-    const validity = getGhostValidity(origPos, def.widthCm, def.heightCm, def.depthCm, curr, rotatingId)
-    renderer.updateGhost(origPos, def.widthCm, def.heightCm, def.depthCm, validity, curr)
+    const validity = getGhostValidity(origPos, def.widthCm, def.heightCm, def.depthCm, curr, rotatingId, def.blocks)
+    renderer.updateGhost(origPos, def.widthCm, def.heightCm, def.depthCm, validity, curr, def.blocks)
   }, [])
 
   const handleRotateEnd = useCallback(() => {
@@ -444,11 +484,7 @@ export function CanvasPanel() {
     // Check if rotation actually changed
     const rotChanged = currRot.x !== origRot.x || currRot.y !== origRot.y || currRot.z !== origRot.z
     if (rotChanged) {
-      if (useAppStore.getState().forceMode
-        ? isInBounds(origPos, def.widthCm, def.heightCm, def.depthCm, currRot)
-        : isValidPosition(origPos, def.widthCm, def.heightCm, def.depthCm, currRot, rotatingId)) {
-        store.rotateCargo(rotatingId, currRot)
-      }
+      store.rotateCargo(rotatingId, currRot)
     }
 
     rotatingInstanceRef.current = null
@@ -643,8 +679,8 @@ export function CanvasPanel() {
     }
 
     const rot = dragState.currentRotation
-    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot)
-    const validity = getGhostValidity(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
+    const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, undefined, def.blocks)
+    const validity = getGhostValidity(snapped, def.widthCm, def.heightCm, def.depthCm, rot, undefined, def.blocks)
     renderer.updateGhost(snapped, def.widthCm, def.heightCm, def.depthCm, validity, rot, def.blocks)
     store.setDragState({ ...dragState, currentPosition: snapped, isValid: validity !== 'invalid' })
   }, [])
@@ -683,10 +719,10 @@ export function CanvasPanel() {
     const floorHit = intersectRayPlane(ray, 0)
 
     if (floorHit) {
-      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot)
+      const snapped = snapPosition(floorHit, def.widthCm, def.heightCm, def.depthCm, rot, undefined, def.blocks)
       if (useAppStore.getState().forceMode
-        ? isInBounds(snapped, def.widthCm, def.heightCm, def.depthCm, rot)
-        : isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot)) {
+        ? isInBounds(snapped, def.widthCm, def.heightCm, def.depthCm, rot, def.blocks)
+        : isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, undefined, def.blocks)) {
         store.placeCargo(cargoDefId, snapped, rot)
       }
     }
