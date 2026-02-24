@@ -100,7 +100,7 @@ export interface AppState {
   redo: () => void
 }
 
-function recomputeAnalytics(
+function recomputeAnalyticsSync(
   placements: PlacedCargo[],
   cargoDefs: CargoItemDef[],
   container: ContainerDef,
@@ -112,6 +112,18 @@ function recomputeAnalytics(
   const grid = getVoxelGrid()
   const supportResults = checkAllSupports(grid, placements, cargoDefs)
   return { weightResult, cogDeviation, supportResults }
+}
+
+let analyticsTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleAnalytics(): void {
+  if (analyticsTimer !== null) return
+  analyticsTimer = setTimeout(() => {
+    analyticsTimer = null
+    const state = useAppStore.getState()
+    const analytics = recomputeAnalyticsSync(state.placements, state.cargoDefs, state.container)
+    useAppStore.setState(analytics)
+  }, 0)
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -156,13 +168,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const newPlacements = state.placements.filter((p) => p.cargoDefId !== id)
     const newDefs = state.cargoDefs.filter((d) => d.id !== id)
-    const analytics = recomputeAnalytics(newPlacements, newDefs, state.container)
     set({
       cargoDefs: newDefs,
       placements: newPlacements,
       renderVersion: state.renderVersion + 1,
-      ...analytics,
     })
+    scheduleAnalytics()
   },
   updateCargoDef: (id, updates) => {
     set((state) => ({
@@ -210,7 +221,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     historyManager.executeCommand(cmd, grid)
 
     const newPlacements = [...state.placements, newPlacement]
-    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
 
     set({
       placements: newPlacements,
@@ -218,8 +228,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
-      ...analytics,
     })
+    scheduleAnalytics()
   },
   removePlacement: (instanceId) => {
     const state = get()
@@ -240,7 +250,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     const newPlacements = state.placements.filter((p) => p.instanceId !== instanceId)
-    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
 
     set({
       placements: newPlacements,
@@ -248,8 +257,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
-      ...analytics,
     })
+    scheduleAnalytics()
   },
   moveCargo: (instanceId, newPosition) => {
     const state = get()
@@ -286,15 +295,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newPlacements = state.placements.map((p) =>
       p.instanceId === instanceId ? updatedPlacement : p,
     )
-    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
 
     set({
       placements: newPlacements,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
-      ...analytics,
     })
+    scheduleAnalytics()
   },
   rotateCargo: (instanceId, newRotation) => {
     const state = get()
@@ -363,15 +371,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newPlacements = state.placements.map((p) =>
       p.instanceId === instanceId ? updatedPlacement : p,
     )
-    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
 
     set({
       placements: newPlacements,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
-      ...analytics,
     })
+    scheduleAnalytics()
   },
 
   dropCargo: (instanceId) => {
@@ -499,7 +506,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     historyManager.clear()
 
-    const analytics = recomputeAnalytics(data.placements, data.cargoDefs, data.container)
+    const analytics = recomputeAnalyticsSync(data.placements, data.cargoDefs, data.container)
 
     set((state) => ({
       container: data.container,
@@ -542,15 +549,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
 
-    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
-
     set({
       placements: newPlacements,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
-      ...analytics,
     })
+    scheduleAnalytics()
   },
   redo: () => {
     const grid = getVoxelGrid()
@@ -576,15 +581,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
 
-    const analytics = recomputeAnalytics(newPlacements, state.cargoDefs, state.container)
-
     set({
       placements: newPlacements,
       canUndo: historyManager.canUndo,
       canRedo: historyManager.canRedo,
       renderVersion: state.renderVersion + 1,
-      ...analytics,
     })
+    scheduleAnalytics()
   },
 }))
 

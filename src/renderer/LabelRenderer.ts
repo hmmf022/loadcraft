@@ -41,9 +41,9 @@ export class LabelRenderer {
       if (!el) {
         el = document.createElement('div')
         el.style.cssText =
-          'position:absolute;background:rgba(0,0,0,0.75);color:#fff;font-size:11px;' +
+          'position:absolute;left:0;top:0;background:rgba(0,0,0,0.75);color:#fff;font-size:11px;' +
           'padding:2px 6px;border-radius:3px;pointer-events:none;white-space:nowrap;' +
-          'will-change:transform;transform:translate(-50%,-100%);'
+          'will-change:transform;'
         this.container.appendChild(el)
         this.elements.set(label.instanceId, el)
       }
@@ -94,8 +94,7 @@ export class LabelRenderer {
 
       el.style.display = ''
       el.style.opacity = String(opacity)
-      el.style.left = `${sx}px`
-      el.style.top = `${sy}px`
+      el.style.transform = `translate(calc(${sx}px - 50%), calc(${sy}px - 100%))`
     }
   }
 

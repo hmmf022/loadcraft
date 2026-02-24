@@ -17,9 +17,15 @@ const CAMERA_PRESETS: Record<string, { theta: number; phi: number }> = {
   isometric: { theta: Math.PI / 4,  phi: Math.PI / 4 },
 }
 
+let pickItemsCache: PickItem[] = []
+let pickItemsCacheVersion = -1
+
 /** Build AABB pick items from current placements (rotation-aware, composite-aware) */
 function buildPickItems(): PickItem[] {
   const state = useAppStore.getState()
+  if (state.renderVersion === pickItemsCacheVersion) {
+    return pickItemsCache
+  }
   const defMap = new Map<string, CargoItemDef>()
   for (const d of state.cargoDefs) {
     defMap.set(d.id, d)
@@ -53,6 +59,8 @@ function buildPickItems(): PickItem[] {
       items.push({ instanceId: p.instanceId, aabb })
     }
   }
+  pickItemsCache = items
+  pickItemsCacheVersion = state.renderVersion
   return items
 }
 
@@ -198,21 +206,27 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
   const maxValidY = Math.floor(ch - testAABB.max.y)
   let bestY = minValidY
 
+  // Voxelize once at minValidY and reuse with Y offset
+  const basePos: Vec3 = { x, y: minValidY, z }
+  const baseResult = blocks
+    ? voxelizeComposite(blocks, basePos, rotationDeg)
+    : voxelize(widthCm, heightCm, depthCm, basePos, rotationDeg)
+
   for (let y = minValidY; y <= maxValidY; y++) {
-    const testPos = { x, y, z }
-    const result = blocks
-      ? voxelizeComposite(blocks, testPos, rotationDeg)
-      : voxelize(widthCm, heightCm, depthCm, testPos, rotationDeg)
-    const { min, max } = result.aabb
-    if (min.x < 0 || min.y < 0 || min.z < 0) continue
-    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) continue
+    const dy = y - minValidY
+    // AABB with Y offset
+    const minAY = baseResult.aabb.min.y + dy
+    const maxAY = baseResult.aabb.max.y + dy
+    // Bounds check (X/Z use baseResult directly)
+    if (baseResult.aabb.min.x < 0 || minAY < 0 || baseResult.aabb.min.z < 0) continue
+    if (baseResult.aabb.max.x > grid.width || maxAY > grid.height || baseResult.aabb.max.z > grid.depth) continue
 
     // Collision check
     let collision = false
-    if (result.usesFastPath) {
-      for (let vz = min.z; vz < max.z && !collision; vz++) {
-        for (let vy = min.y; vy < max.y && !collision; vy++) {
-          for (let vx = min.x; vx < max.x && !collision; vx++) {
+    if (baseResult.usesFastPath) {
+      for (let vz = baseResult.aabb.min.z; vz < baseResult.aabb.max.z && !collision; vz++) {
+        for (let vy = minAY; vy < maxAY && !collision; vy++) {
+          for (let vx = baseResult.aabb.min.x; vx < baseResult.aabb.max.x && !collision; vx++) {
             const val = grid.get(vx, vy, vz)
             if (val !== 0 && val !== excludeInstanceId) {
               collision = true
@@ -221,7 +235,13 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
         }
       }
     } else {
-      collision = grid.hasCollision(result.voxels, excludeInstanceId)
+      for (const v of baseResult.voxels) {
+        const val = grid.get(v.x, v.y + dy, v.z)
+        if (val !== 0 && val !== excludeInstanceId) {
+          collision = true
+          break
+        }
+      }
     }
 
     if (!collision) {
