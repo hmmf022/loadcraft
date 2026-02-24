@@ -1,6 +1,7 @@
 import { useAppStore } from '../state/store'
 import { getVoxelGrid } from '../core/voxelGridSingleton'
-import type { Vec3 } from '../core/types'
+import type { Vec3, ShapeBlock } from '../core/types'
+import { voxelize, voxelizeComposite } from '../core/Voxelizer'
 import styles from './CargoList.module.css'
 
 export function CargoList() {
@@ -14,9 +15,13 @@ export function CargoList() {
     if (!def) return
 
     // Auto-placement: find first available position using VoxelGrid
-    const position = findPlacementPosition(def.widthCm, def.heightCm, def.depthCm, state.container)
+    const rotationDeg: Vec3 = { x: 0, y: 0, z: 0 }
+    const position = findPlacementPosition(
+      def.widthCm, def.heightCm, def.depthCm,
+      state.container, rotationDeg, def.blocks,
+    )
     if (position) {
-      placeCargo(defId, position)
+      placeCargo(defId, position, rotationDeg)
     } else {
       alert('配置可能な位置が見つかりません')
     }
@@ -97,43 +102,76 @@ export function CargoList() {
   )
 }
 
-// Auto-placement using VoxelGrid for precise collision detection
+// Auto-placement using VoxelGrid for precise collision detection.
+// Voxelizes once at origin; reuses shape via offset for each candidate position.
 function findPlacementPosition(
   w: number, h: number, d: number,
   container: { widthCm: number; heightCm: number; depthCm: number },
+  rotationDeg: Vec3,
+  blocks?: ShapeBlock[],
 ): Vec3 | null {
-  const cw = container.widthCm
-  const ch = container.heightCm
-  const cd = container.depthCm
   const grid = getVoxelGrid()
 
-  const step = 1 // 1cm precision with VoxelGrid
+  // === Voxelize once at origin ===
+  const origin: Vec3 = { x: 0, y: 0, z: 0 }
+  const result = blocks
+    ? voxelizeComposite(blocks, origin, rotationDeg)
+    : voxelize(w, h, d, origin, rotationDeg)
 
-  for (let y = 0; y + h <= ch; y += step) {
-    for (let z = 0; z + d <= cd; z += step) {
-      for (let x = 0; x + w <= cw; x += step) {
-        // Quick check: test corner voxels first for fast rejection
-        if (grid.get(x, y, z) !== 0) continue
-        if (grid.get(x + w - 1, y, z) !== 0) continue
-        if (grid.get(x, y + h - 1, z) !== 0) continue
-        if (grid.get(x, y, z + d - 1) !== 0) continue
+  const aabb = result.aabb
+  const aabbW = aabb.max.x - aabb.min.x
+  const aabbH = aabb.max.y - aabb.min.y
+  const aabbD = aabb.max.z - aabb.min.z
 
-        // Full check using hasCollision
-        const voxels: Vec3[] = []
+  // Search range: AABB offset by candidate position must fit in container
+  const minX = Math.max(0, Math.ceil(-aabb.min.x))
+  const maxX = Math.floor(container.widthCm - aabbW - aabb.min.x)
+  const minY = Math.max(0, Math.ceil(-aabb.min.y))
+  const maxY = Math.floor(container.heightCm - aabbH - aabb.min.y)
+  const minZ = Math.max(0, Math.ceil(-aabb.min.z))
+  const maxZ = Math.floor(container.depthCm - aabbD - aabb.min.z)
+
+  // === Fast path: axis-aligned — AABB direct scan with corner rejection ===
+  if (result.usesFastPath) {
+    for (let y = minY; y <= maxY; y++) {
+      for (let z = minZ; z <= maxZ; z++) {
+        for (let x = minX; x <= maxX; x++) {
+          // Corner check: fast rejection (~90% of candidates)
+          const x1 = x + aabbW - 1, y1 = y + aabbH - 1, z1 = z + aabbD - 1
+          if (grid.get(x, y, z) !== 0) continue
+          if (grid.get(x1, y, z) !== 0) continue
+          if (grid.get(x, y1, z) !== 0) continue
+          if (grid.get(x, y, z1) !== 0) continue
+          if (grid.get(x1, y1, z) !== 0) continue
+          if (grid.get(x1, y, z1) !== 0) continue
+          if (grid.get(x, y1, z1) !== 0) continue
+          if (grid.get(x1, y1, z1) !== 0) continue
+
+          // Full AABB voxel scan
+          let collision = false
+          for (let vz = z; vz < z + aabbD && !collision; vz++)
+            for (let vy = y; vy < y + aabbH && !collision; vy++)
+              for (let vx = x; vx < x + aabbW && !collision; vx++)
+                if (grid.get(vx, vy, vz) !== 0) collision = true
+          if (!collision) return { x, y, z }
+        }
+      }
+    }
+    return null
+  }
+
+  // === Slow path: offset pre-computed voxels for each candidate ===
+  const baseVoxels = result.voxels
+  for (let y = minY; y <= maxY; y++) {
+    for (let z = minZ; z <= maxZ; z++) {
+      for (let x = minX; x <= maxX; x++) {
         let collision = false
-        for (let vz = z; vz < z + d && !collision; vz++) {
-          for (let vy = y; vy < y + h && !collision; vy++) {
-            for (let vx = x; vx < x + w && !collision; vx++) {
-              if (grid.get(vx, vy, vz) !== 0) {
-                collision = true
-              }
-              voxels.push({ x: vx, y: vy, z: vz })
-            }
-          }
+        for (const v of baseVoxels) {
+          const gx = v.x + x, gy = v.y + y, gz = v.z + z
+          if (!grid.isInBounds(gx, gy, gz)) { collision = true; break }
+          if (grid.get(gx, gy, gz) !== 0) { collision = true; break }
         }
-        if (!collision) {
-          return { x, y, z }
-        }
+        if (!collision) return { x, y, z }
       }
     }
   }
