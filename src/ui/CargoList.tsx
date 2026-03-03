@@ -1,7 +1,7 @@
 import { useAppStore } from '../state/store'
-import { getVoxelGrid } from '../core/voxelGridSingleton'
-import type { Vec3, ShapeBlock } from '../core/types'
-import { voxelize, voxelizeComposite } from '../core/Voxelizer'
+import type { Vec3 } from '../core/types'
+import { OccupancyMap } from '../core/OccupancyMap'
+import { computeRotatedAABB } from '../core/Voxelizer'
 import styles from './CargoList.module.css'
 
 export function CargoList() {
@@ -14,11 +14,9 @@ export function CargoList() {
     const def = state.cargoDefs.find((d) => d.id === defId)
     if (!def) return
 
-    // Auto-placement: find first available position using VoxelGrid
     const rotationDeg: Vec3 = { x: 0, y: 0, z: 0 }
     const position = findPlacementPosition(
-      def.widthCm, def.heightCm, def.depthCm,
-      state.container, rotationDeg, def.blocks,
+      def.widthCm, def.heightCm, def.depthCm, rotationDeg,
     )
     if (position) {
       placeCargo(defId, position, rotationDeg)
@@ -102,78 +100,18 @@ export function CargoList() {
   )
 }
 
-// Auto-placement using VoxelGrid for precise collision detection.
-// Voxelizes once at origin; reuses shape via offset for each candidate position.
+// Auto-placement using OccupancyMap (height map) for O(1) Y-axis resolution.
 function findPlacementPosition(
   w: number, h: number, d: number,
-  container: { widthCm: number; heightCm: number; depthCm: number },
   rotationDeg: Vec3,
-  blocks?: ShapeBlock[],
 ): Vec3 | null {
-  const grid = getVoxelGrid()
-
-  // === Voxelize once at origin ===
-  const origin: Vec3 = { x: 0, y: 0, z: 0 }
-  const result = blocks
-    ? voxelizeComposite(blocks, origin, rotationDeg)
-    : voxelize(w, h, d, origin, rotationDeg)
-
-  const aabb = result.aabb
+  const state = useAppStore.getState()
+  const aabb = computeRotatedAABB(w, h, d, { x: 0, y: 0, z: 0 }, rotationDeg)
   const aabbW = aabb.max.x - aabb.min.x
   const aabbH = aabb.max.y - aabb.min.y
   const aabbD = aabb.max.z - aabb.min.z
-
-  // Search range: AABB offset by candidate position must fit in container
-  const minX = Math.max(0, Math.ceil(-aabb.min.x))
-  const maxX = Math.floor(container.widthCm - aabbW - aabb.min.x)
-  const minY = Math.max(0, Math.ceil(-aabb.min.y))
-  const maxY = Math.floor(container.heightCm - aabbH - aabb.min.y)
-  const minZ = Math.max(0, Math.ceil(-aabb.min.z))
-  const maxZ = Math.floor(container.depthCm - aabbD - aabb.min.z)
-
-  // === Fast path: axis-aligned — AABB direct scan with corner rejection ===
-  if (result.usesFastPath) {
-    for (let y = minY; y <= maxY; y++) {
-      for (let z = minZ; z <= maxZ; z++) {
-        for (let x = minX; x <= maxX; x++) {
-          // Corner check: fast rejection (~90% of candidates)
-          const x1 = x + aabbW - 1, y1 = y + aabbH - 1, z1 = z + aabbD - 1
-          if (grid.get(x, y, z) !== 0) continue
-          if (grid.get(x1, y, z) !== 0) continue
-          if (grid.get(x, y1, z) !== 0) continue
-          if (grid.get(x, y, z1) !== 0) continue
-          if (grid.get(x1, y1, z) !== 0) continue
-          if (grid.get(x1, y, z1) !== 0) continue
-          if (grid.get(x, y1, z1) !== 0) continue
-          if (grid.get(x1, y1, z1) !== 0) continue
-
-          // Full AABB voxel scan
-          let collision = false
-          for (let vz = z; vz < z + aabbD && !collision; vz++)
-            for (let vy = y; vy < y + aabbH && !collision; vy++)
-              for (let vx = x; vx < x + aabbW && !collision; vx++)
-                if (grid.get(vx, vy, vz) !== 0) collision = true
-          if (!collision) return { x, y, z }
-        }
-      }
-    }
-    return null
-  }
-
-  // === Slow path: offset pre-computed voxels for each candidate ===
-  const baseVoxels = result.voxels
-  for (let y = minY; y <= maxY; y++) {
-    for (let z = minZ; z <= maxZ; z++) {
-      for (let x = minX; x <= maxX; x++) {
-        let collision = false
-        for (const v of baseVoxels) {
-          const gx = v.x + x, gy = v.y + y, gz = v.z + z
-          if (!grid.isInBounds(gx, gy, gz)) { collision = true; break }
-          if (grid.get(gx, gy, gz) !== 0) { collision = true; break }
-        }
-        if (!collision) return { x, y, z }
-      }
-    }
-  }
-  return null
+  const map = OccupancyMap.fromPlacements(
+    state.placements, state.cargoDefs, state.container,
+  )
+  return map.findPosition(aabbW, aabbH, aabbD)
 }

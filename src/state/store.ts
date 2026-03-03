@@ -2,7 +2,10 @@ import { create } from 'zustand'
 import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView, WeightResult } from '../core/types'
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
-import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand } from '../core/History'
+import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, BatchCommand } from '../core/History'
+import { autoPack } from '../core/AutoPacker'
+import { checkInterference } from '../core/InterferenceChecker'
+import type { InterferencePair } from '../core/InterferenceChecker'
 import { voxelize, voxelizeComposite } from '../core/Voxelizer'
 import { computeWeight, computeCogDeviation } from '../core/WeightCalculator'
 import type { CogDeviation } from '../core/WeightCalculator'
@@ -43,6 +46,7 @@ export interface AppState {
   moveCargo: (instanceId: number, newPosition: Vec3) => void
   rotateCargo: (instanceId: number, newRotation: Vec3) => void
   dropCargo: (instanceId: number) => void
+  autoPackCargo: () => void
 
   // Selection
   selectedInstanceId: number | null
@@ -88,6 +92,10 @@ export interface AppState {
   weightResult: WeightResult
   cogDeviation: CogDeviation | null
   supportResults: Map<number, SupportResult>
+
+  // Interference
+  interferenceResults: InterferencePair[]
+  checkInterference: () => void
 
   // Save/Load
   saveState: () => void
@@ -419,6 +427,63 @@ export const useAppStore = create<AppState>((set, get) => ({
     state.moveCargo(instanceId, { x: pos.x, y: bestY, z: pos.z })
   },
 
+  autoPackCargo: () => {
+    const state = get()
+    if (state.cargoDefs.length === 0) {
+      state.addToast('荷物が定義されていません', 'error')
+      return
+    }
+
+    const grid = getVoxelGrid()
+
+    const result = autoPack(
+      state.cargoDefs,
+      state.container,
+      state.nextInstanceId,
+    )
+
+    if (result.placements.length === 0) {
+      state.addToast('配置可能な位置が見つかりません', 'error')
+      return
+    }
+
+    // BatchCommand を構築
+    const commands: PlaceCommand[] = []
+    for (let i = 0; i < result.placements.length; i++) {
+      const p = result.placements[i]!
+      const r = result.voxelizeResults[i]!
+      const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
+      if (!def) continue
+      commands.push(new PlaceCommand(p.instanceId, r, def.name, p))
+    }
+
+    // 方式B: autoPack で grid への書き込みはクリア済み
+    // BatchCommand.execute() で再度 grid に書き込む
+    const batch = new BatchCommand(commands)
+    historyManager.executeCommand(batch, grid)
+
+    const newPlacements = [...state.placements, ...result.placements]
+    const maxInstanceId = result.placements.reduce(
+      (max, p) => Math.max(max, p.instanceId), state.nextInstanceId
+    )
+
+    set({
+      placements: newPlacements,
+      nextInstanceId: maxInstanceId + 1,
+      canUndo: historyManager.canUndo,
+      canRedo: historyManager.canRedo,
+      renderVersion: state.renderVersion + 1,
+    })
+    scheduleAnalytics()
+
+    const failCount = result.failedDefIds.length
+    if (failCount > 0) {
+      state.addToast(`${result.placements.length} 個配置、${failCount} 個配置不可`, 'info')
+    } else {
+      state.addToast(`${result.placements.length} 個すべて配置完了`, 'success')
+    }
+  },
+
   // Selection
   selectedInstanceId: null,
   setSelectedInstanceId: (id) => set({ selectedInstanceId: id }),
@@ -475,6 +540,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   weightResult: initialWeightResult,
   cogDeviation: null,
   supportResults: new Map(),
+
+  // Interference
+  interferenceResults: [],
+  checkInterference: () => {
+    const state = get()
+    const result = checkInterference(state.placements, state.cargoDefs)
+    set({ interferenceResults: result.pairs })
+    if (result.pairs.length > 0) {
+      state.addToast(`干渉 ${result.pairs.length} 件検出`, 'error')
+    } else {
+      state.addToast('干渉なし', 'success')
+    }
+  },
 
   // Save/Load
   saveState: () => {
@@ -545,6 +623,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       newPlacements = state.placements.map((p) =>
         p.instanceId === command.instanceId ? command.oldPlacement : p,
       )
+    } else if (command instanceof BatchCommand) {
+      newPlacements = state.placements.filter((p) =>
+        !command.commands.some((c) => c.placement.instanceId === p.instanceId)
+      )
     } else {
       return
     }
@@ -577,6 +659,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       newPlacements = state.placements.map((p) =>
         p.instanceId === command.instanceId ? command.placement : p,
       )
+    } else if (command instanceof BatchCommand) {
+      const addedPlacements = command.commands.map((c) => c.placement)
+      newPlacements = [...state.placements, ...addedPlacements]
     } else {
       return
     }

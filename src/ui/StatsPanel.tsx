@@ -5,6 +5,7 @@ export function StatsPanel() {
   const weightResult = useAppStore((s) => s.weightResult)
   const cogDeviation = useAppStore((s) => s.cogDeviation)
   const supportResults = useAppStore((s) => s.supportResults)
+  const interferenceResults = useAppStore((s) => s.interferenceResults)
   const container = useAppStore((s) => s.container)
   const placements = useAppStore((s) => s.placements)
 
@@ -29,6 +30,9 @@ export function StatsPanel() {
   }
   if (unsupportedCount > 0) {
     warnings.push(`浮遊荷物: ${unsupportedCount}個の荷物が十分に支持されていません`)
+  }
+  for (const pair of interferenceResults) {
+    warnings.push(`干渉: ${pair.name1} ↔ ${pair.name2}`)
   }
 
   return (

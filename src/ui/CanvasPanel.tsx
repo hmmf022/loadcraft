@@ -6,6 +6,7 @@ import type { PickItem } from '../renderer/Raycaster'
 import type { Vec3, CargoItemDef, ShapeBlock } from '../core/types'
 import { getVoxelGrid } from '../core/voxelGridSingleton'
 import { computeRotatedAABB, voxelize, voxelizeComposite, rotateVec3 } from '../core/Voxelizer'
+import { OccupancyMap } from '../core/OccupancyMap'
 import styles from './CanvasPanel.module.css'
 
 const CAMERA_PRESETS: Record<string, { theta: number; phi: number }> = {
@@ -165,14 +166,28 @@ function getGhostValidity(pos: Vec3, widthCm: number, heightCm: number, depthCm:
   return (supportedBottom / totalBottom) >= 0.8 ? 'valid' : 'floating'
 }
 
+// OccupancyMap cache for snapPosition (keyed by renderVersion + excludeInstanceId)
+let mapCache: OccupancyMap | null = null
+let mapCacheKey = ''
+
+function getCachedOccupancyMap(excludeInstanceId?: number): OccupancyMap {
+  const state = useAppStore.getState()
+  const key = `${state.renderVersion}-${excludeInstanceId ?? ''}`
+  if (key === mapCacheKey && mapCache) return mapCache
+  mapCache = OccupancyMap.fromPlacements(
+    state.placements, state.cargoDefs, state.container, excludeInstanceId,
+  )
+  mapCacheKey = key
+  return mapCache
+}
+
 /**
- * Snap position: determine X,Z from hit point, then find the lowest valid Y
- * (gravity stacking — cargo drops down and lands on top of existing items)
+ * Snap position: determine X,Z from hit point, then find Y via OccupancyMap height lookup.
  */
-function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number, blocks?: ShapeBlock[]): Vec3 {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm: number, rotationDeg: Vec3, excludeInstanceId?: number, _blocks?: ShapeBlock[]): Vec3 {
   const state = useAppStore.getState()
   const cw = state.container.widthCm
-  const ch = state.container.heightCm
   const cd = state.container.depthCm
 
   // Compute AABB size for the rotated box at origin
@@ -197,60 +212,13 @@ function snapPosition(hitPoint: Vec3, widthCm: number, heightCm: number, depthCm
   x = Math.max(-offsetX, Math.min(x, cw - aabbW - offsetX))
   z = Math.max(-offsetZ, Math.min(z, cd - aabbD - offsetZ))
 
-  // Find the lowest valid Y by scanning from bottom up
-  const grid = getVoxelGrid()
-
-  // Valid Y range: AABB must fit within [0, ch]
-  // AABB at position y occupies [y + testAABB.min.y, y + testAABB.max.y]
+  // Y is determined by the OccupancyMap height lookup
   const minValidY = Math.max(0, Math.ceil(-testAABB.min.y))
-  const maxValidY = Math.floor(ch - testAABB.max.y)
-  let bestY = minValidY
+  const map = getCachedOccupancyMap(excludeInstanceId)
+  const stackY = map.getStackHeight(x + offsetX, z + offsetZ, aabbW, aabbD)
+  const y = Math.max(minValidY, stackY)
 
-  // Voxelize once at minValidY and reuse with Y offset
-  const basePos: Vec3 = { x, y: minValidY, z }
-  const baseResult = blocks
-    ? voxelizeComposite(blocks, basePos, rotationDeg)
-    : voxelize(widthCm, heightCm, depthCm, basePos, rotationDeg)
-
-  for (let y = minValidY; y <= maxValidY; y++) {
-    const dy = y - minValidY
-    // AABB with Y offset
-    const minAY = baseResult.aabb.min.y + dy
-    const maxAY = baseResult.aabb.max.y + dy
-    // Bounds check (X/Z use baseResult directly)
-    if (baseResult.aabb.min.x < 0 || minAY < 0 || baseResult.aabb.min.z < 0) continue
-    if (baseResult.aabb.max.x > grid.width || maxAY > grid.height || baseResult.aabb.max.z > grid.depth) continue
-
-    // Collision check
-    let collision = false
-    if (baseResult.usesFastPath) {
-      for (let vz = baseResult.aabb.min.z; vz < baseResult.aabb.max.z && !collision; vz++) {
-        for (let vy = minAY; vy < maxAY && !collision; vy++) {
-          for (let vx = baseResult.aabb.min.x; vx < baseResult.aabb.max.x && !collision; vx++) {
-            const val = grid.get(vx, vy, vz)
-            if (val !== 0 && val !== excludeInstanceId) {
-              collision = true
-            }
-          }
-        }
-      }
-    } else {
-      for (const v of baseResult.voxels) {
-        const val = grid.get(v.x, v.y + dy, v.z)
-        if (val !== 0 && val !== excludeInstanceId) {
-          collision = true
-          break
-        }
-      }
-    }
-
-    if (!collision) {
-      bestY = y
-      break
-    }
-  }
-
-  return { x, y: bestY, z }
+  return { x, y, z }
 }
 
 export function CanvasPanel() {

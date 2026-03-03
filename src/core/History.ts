@@ -149,6 +149,33 @@ export class RotateCommand implements Command {
   }
 }
 
+export class BatchCommand implements Command {
+  commands: Command[]
+  placement: PlacedCargo  // 最初のコマンドの placement を代表使用
+
+  constructor(commands: Command[]) {
+    this.commands = commands
+    this.placement = commands[0]!.placement
+  }
+
+  execute(grid: VoxelGrid): boolean {
+    for (const cmd of this.commands) {
+      cmd.execute(grid)
+    }
+    return true
+  }
+
+  undo(grid: VoxelGrid): void {
+    for (let i = this.commands.length - 1; i >= 0; i--) {
+      this.commands[i]!.undo(grid)
+    }
+  }
+
+  getDescription(): string {
+    return `Auto Pack (${this.commands.length} items)`
+  }
+}
+
 export class HistoryManager {
   undoStack: Command[] = []
   redoStack: Command[] = []
