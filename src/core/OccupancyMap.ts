@@ -58,10 +58,9 @@ export class OccupancyMap {
     return maxH
   }
 
-  /** Find the first position where a w×h×d item fits (lowest-Y-first).
-   *  Scans all candidate positions in Z→X order and picks the one with the
-   *  smallest stack height, so lower layers are filled before higher ones.
-   *  Floor (y=0) is naturally preferred since 0 < any positive height. */
+  /** Find the first position where a w×h×d item fits (wall-building from back wall X=0).
+   *  Scans X from 0→max, Z from 0→max, and picks the position
+   *  with the smallest X (closest to back wall), breaking ties by lowest Y. */
   findPosition(w: number, h: number, d: number): Vec3 | null {
     const cs = this.cellSize
     const itemCellsW = Math.ceil(w / cs)
@@ -69,19 +68,26 @@ export class OccupancyMap {
 
     let bestPos: Vec3 | null = null
     let bestY = Infinity
+    let bestX = Infinity
 
-    for (let cz = 0; cz <= this.cellsZ - itemCellsD; cz++) {
-      for (let cx = 0; cx <= this.cellsX - itemCellsW; cx++) {
+    // X を画面奥(0)から手前(max)へ
+    for (let cx = 0; cx <= this.cellsX - itemCellsW; cx++) {
+      for (let cz = 0; cz <= this.cellsZ - itemCellsD; cz++) {
         let maxH = 0
-        for (let dz = 0; dz < itemCellsD; dz++) {
-          for (let dx = 0; dx < itemCellsW; dx++) {
+        for (let dx = 0; dx < itemCellsW; dx++) {
+          for (let dz = 0; dz < itemCellsD; dz++) {
             const val = this.heightMap[(cx + dx) + this.cellsX * (cz + dz)]!
             if (val > maxH) maxH = val
           }
         }
-        if (maxH + h <= this.containerH && maxH < bestY) {
-          bestY = maxH
-          bestPos = { x: cx * cs, y: maxH, z: cz * cs }
+        const xPos = cx * cs
+        if (maxH + h <= this.containerH) {
+          // 画面奥(X=0)優先 → 同X帯なら低Y優先
+          if (xPos < bestX || (xPos === bestX && maxH < bestY)) {
+            bestX = xPos
+            bestY = maxH
+            bestPos = { x: xPos, y: maxH, z: cz * cs }
+          }
         }
       }
     }

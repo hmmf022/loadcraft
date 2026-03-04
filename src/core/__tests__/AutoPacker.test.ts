@@ -13,28 +13,28 @@ describe('autoPack', () => {
     expect(result.failedDefIds).toHaveLength(0)
   })
 
-  it('1個の直方体を (0,0,0) に配置', () => {
+  it('1個の直方体を奥壁に配置', () => {
     const defs: CargoItemDef[] = [{
       id: 'a', name: 'A', widthCm: 10, heightCm: 10, depthCm: 10,
       weightKg: 1, color: '#ff0000',
     }]
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(1)
+    // 奥壁: x = 0
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
     expect(result.failedDefIds).toHaveLength(0)
   })
 
-  it('2個の直方体: 横並び配置', () => {
+  it('2個の直方体: 奥壁から横並び配置', () => {
     const defs: CargoItemDef[] = [
       { id: 'a', name: 'A', widthCm: 50, heightCm: 10, depthCm: 10, weightKg: 1, color: '#f00' },
       { id: 'b', name: 'B', widthCm: 50, heightCm: 10, depthCm: 10, weightKg: 1, color: '#0f0' },
     ]
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(2)
-    // Both placed at Y=0
-    for (const p of result.placements) {
-      expect(p.positionCm.y).toBe(0)
-    }
+    // 1st: x=0, 2nd: x=50
+    expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
+    expect(result.placements[1]!.positionCm).toEqual({ x: 50, y: 0, z: 0 })
   })
 
   it('体積降順ソート: 大きい荷物が先に配置される', () => {
@@ -71,8 +71,8 @@ describe('autoPack', () => {
     expect(result.failedDefIds).toEqual(['long'])
   })
 
-  it('棚積み: 行折り返し', () => {
-    // 3個の60cm幅アイテム → 1個目x=0, 2個目はx=60で入らない→次行x=0
+  it('棚積み: 行折り返し (奥壁から手前へ)', () => {
+    // 3個の60cm幅アイテム → 1個目x=0, 2個目はx=60+60=120で入らない→次行
     const defs: CargoItemDef[] = [
       { id: 'a', name: 'A', widthCm: 60, heightCm: 10, depthCm: 20, weightKg: 1, color: '#f00' },
       { id: 'b', name: 'B', widthCm: 60, heightCm: 10, depthCm: 20, weightKg: 1, color: '#0f0' },
@@ -80,8 +80,11 @@ describe('autoPack', () => {
     ]
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(3)
+    // 1st: x=0, z=0
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
+    // 2nd: cursorX reset to 0, next row z=20, x=0
     expect(result.placements[1]!.positionCm).toEqual({ x: 0, y: 0, z: 20 })
+    // 3rd: cursorX reset to 0, next row z=40, x=0
     expect(result.placements[2]!.positionCm).toEqual({ x: 0, y: 0, z: 40 })
   })
 
@@ -93,6 +96,7 @@ describe('autoPack', () => {
     ]
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(2)
+    // 1st: x=0, y=0
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
     // Second item goes to next layer (y=30)
     expect(result.placements[1]!.positionCm).toEqual({ x: 0, y: 30, z: 0 })

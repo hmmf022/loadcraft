@@ -29,6 +29,7 @@ export function autoPack(
   })
 
   let nextId = startInstanceId
+  // カーソルを画面奥(X=0)から開始
   let cursorX = 0
   let cursorZ = 0
   let cursorY = 0
@@ -67,6 +68,7 @@ export function autoPack(
       continue
     }
 
+    // 画面奥(X=0)から手前に向かって配置
     const pos = { x: cursorX, y: cursorY, z: cursorZ }
     const rot = { x: 0, y: 0, z: 0 }
 

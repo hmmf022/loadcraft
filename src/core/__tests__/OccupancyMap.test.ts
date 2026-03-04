@@ -18,8 +18,9 @@ function makePlacement(instanceId: number, defId: string, x: number, y: number, 
 }
 
 describe('OccupancyMap', () => {
-  it('empty map → findPosition returns (0, 0, 0)', () => {
+  it('empty map → findPosition returns back wall position', () => {
     const map = new OccupancyMap(100, 100, 100)
+    // 奥壁=X=0 から配置
     const pos = map.findPosition(20, 20, 20)
     expect(pos).toEqual({ x: 0, y: 0, z: 0 })
   })
@@ -40,20 +41,21 @@ describe('OccupancyMap', () => {
     expect(pos).toBeNull()
   })
 
-  it('prefers floor over stacking', () => {
+  it('prefers back wall over front positions', () => {
     const map = new OccupancyMap(100, 100, 100)
+    // Fill back wall area: x=0..30
     map.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 20, z: 30 } })
-    // Item at (0,0,0) with size 30x20x30 is occupying y=0..20
-    // Floor has free space at x>=30, so place there instead of stacking
+    // 30x10x30 item: back wall at x=0 is occupied y=0..20
+    // Should place at next Z slot at back wall (x=0, z=30) rather than go to front
     const pos = map.findPosition(30, 10, 30)
-    expect(pos).toEqual({ x: 30, y: 0, z: 0 })
+    expect(pos).toEqual({ x: 0, y: 0, z: 30 })
   })
 
-  it('places next to existing item when space available', () => {
+  it('places next to existing item at back wall', () => {
     const map = new OccupancyMap(100, 100, 100)
-    // Fill left side: x=0..50
+    // Fill back half: x=0..50
     map.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 50, y: 100, z: 100 } })
-    // Item 40x10x10 should go to x=50
+    // Item 40x10x10 should go as close to back wall as possible: x=50
     const pos = map.findPosition(40, 10, 10)
     expect(pos).toEqual({ x: 50, y: 0, z: 0 })
   })
@@ -95,12 +97,12 @@ describe('OccupancyMap', () => {
 
   it('adjacent items do not interfere', () => {
     const map = new OccupancyMap(100, 100, 100)
-    // Two 30x20x30 items side by side
+    // Two 30x20x30 items at back wall (X=0)
     map.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 20, z: 30 } })
-    map.markAABB({ min: { x: 30, y: 0, z: 0 }, max: { x: 60, y: 20, z: 30 } })
-    // Floor has free space at x>=60, so place there instead of stacking
+    map.markAABB({ min: { x: 0, y: 0, z: 30 }, max: { x: 30, y: 20, z: 60 } })
+    // 30x10x30 item should go to the next Z slot at back wall
     const pos = map.findPosition(30, 10, 30)
-    expect(pos).toEqual({ x: 60, y: 0, z: 0 })
+    expect(pos).toEqual({ x: 0, y: 0, z: 60 })
   })
 
   it('findPosition with multiple placements via fromPlacements', () => {
@@ -114,31 +116,52 @@ describe('OccupancyMap', () => {
     }
     const map = OccupancyMap.fromPlacements(placements, defs, smallContainer)
     // Both items fill x=0..100, z=0..50, y=0..50
-    // Floor has free space at z>=50, so place there instead of stacking
+    // Back wall (x=0..10) at z=50..60 is free → place there
     const pos = map.findPosition(10, 10, 10)
     expect(pos).toEqual({ x: 0, y: 0, z: 50 })
   })
 
-  it('fills lower layer before higher layer', () => {
+  it('fills back wall upward before moving to front', () => {
     const map = new OccupancyMap(100, 100, 100)
-    // Column at z=0: height 40
-    map.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 40, z: 30 } })
-    // Column at z=30: height 20
-    map.markAABB({ min: { x: 0, y: 0, z: 30 }, max: { x: 30, y: 20, z: 60 } })
-    // Fill the rest of the floor so no floor space remains
+    // Fill back wall floor: x=0..30, z=0..100
+    map.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 40, z: 100 } })
+    // Fill front area floor
     map.markAABB({ min: { x: 30, y: 0, z: 0 }, max: { x: 100, y: 10, z: 100 } })
-    map.markAABB({ min: { x: 0, y: 0, z: 60 }, max: { x: 30, y: 10, z: 100 } })
-    // Should pick the lower layer (y=10) over higher layers
-    const pos = map.findPosition(10, 10, 10)
-    expect(pos!.y).toBe(10)
+    // Should prefer stacking on back wall (x=0, y=40) over front (x=30, y=10)
+    const pos = map.findPosition(30, 10, 10)
+    expect(pos!.x).toBe(0)
+    expect(pos!.y).toBe(40)
   })
 
   it('stacks on top when floor is fully occupied', () => {
     const map = new OccupancyMap(100, 100, 100)
     // Fill entire floor to height 20
     map.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 100, y: 20, z: 100 } })
-    // No floor space left, must stack
+    // No floor space left, must stack — back wall preferred (X=0)
     const pos = map.findPosition(10, 10, 10)
     expect(pos).toEqual({ x: 0, y: 20, z: 0 })
+  })
+
+  it('wall-building pattern: fills Z then stacks Y before moving X forward', () => {
+    const map = new OccupancyMap(100, 100, 100)
+    // Place 30x20x30 items and verify wall-building order
+    // 1st: back wall floor (X=0)
+    const pos1 = map.findPosition(30, 20, 30)
+    expect(pos1).toEqual({ x: 0, y: 0, z: 0 })
+    map.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 20, z: 30 } })
+
+    // 2nd: next Z slot at back wall
+    const pos2 = map.findPosition(30, 20, 30)
+    expect(pos2).toEqual({ x: 0, y: 0, z: 30 })
+    map.markAABB({ min: { x: 0, y: 0, z: 30 }, max: { x: 30, y: 20, z: 60 } })
+
+    // 3rd: next Z slot at back wall
+    const pos3 = map.findPosition(30, 20, 30)
+    expect(pos3).toEqual({ x: 0, y: 0, z: 60 })
+    map.markAABB({ min: { x: 0, y: 0, z: 60 }, max: { x: 30, y: 20, z: 90 } })
+
+    // 4th: back wall stack (y=20), since Z floor is mostly full
+    const pos4 = map.findPosition(30, 20, 30)
+    expect(pos4).toEqual({ x: 0, y: 20, z: 0 })
   })
 })
