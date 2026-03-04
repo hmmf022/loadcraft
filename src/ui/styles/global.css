@@ -20,6 +20,18 @@
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
+[data-theme="light"] {
+  --bg-primary: #f0f0f5;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e8e8f0;
+  --text-primary: #1e1e2e;
+  --text-secondary: #606070;
+  --accent: #3a8eef;
+  --accent-hover: #2a7edf;
+  --border: #c8c8d8;
+  --input-bg: #ffffff;
+}
+
 html, body, #root {
   width: 100%;
   height: 100%;

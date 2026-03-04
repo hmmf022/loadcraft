@@ -1,4 +1,4 @@
-import { useReducer, useRef, useCallback, useState } from 'react'
+import { useReducer, useRef, useCallback, useState, useEffect } from 'react'
 import { editorReducer } from './state/editorReducer'
 import { EditorHistory } from './state/history'
 import { initialEditorState } from './state/types'
@@ -15,6 +15,17 @@ export function EditorApp() {
   const historyRef = useRef(new EditorHistory())
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
+
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('editor-theme') as 'dark' | 'light') || 'dark'
+  })
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme === 'light' ? 'light' : ''
+    localStorage.setItem('editor-theme', theme)
+  }, [theme])
+  const toggleTheme = useCallback(() => {
+    setTheme(t => t === 'dark' ? 'light' : 'dark')
+  }, [])
 
   const syncHistory = useCallback(() => {
     const history = historyRef.current
@@ -81,8 +92,8 @@ export function EditorApp() {
         </div>
       </div>
       <div className={styles.canvasArea}>
-        <EditorCanvas state={state} dispatch={dispatch} />
-        <EditorToolBar state={state} dispatch={dispatch} canUndo={canUndo} canRedo={canRedo} />
+        <EditorCanvas state={state} dispatch={dispatch} theme={theme} />
+        <EditorToolBar state={state} dispatch={dispatch} canUndo={canUndo} canRedo={canRedo} theme={theme} onToggleTheme={toggleTheme} />
       </div>
     </div>
   )

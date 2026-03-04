@@ -8,6 +8,7 @@ import styles from './EditorCanvas.module.css'
 interface Props {
   state: EditorState
   dispatch: (action: EditorAction) => void
+  theme: 'dark' | 'light'
 }
 
 const VIEW_PRESETS = [
@@ -17,7 +18,7 @@ const VIEW_PRESETS = [
   { name: 'Iso',   theta: Math.PI / 4, phi: Math.PI / 4, targetYFactor: 0.5 },
 ] as const
 
-export function EditorCanvas({ state, dispatch }: Props) {
+export function EditorCanvas({ state, dispatch, theme }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<EditorRenderer | null>(null)
@@ -159,6 +160,19 @@ export function EditorCanvas({ state, dispatch }: Props) {
     if (!renderer) return
     renderer.updateBlocks(state.blocks, DISPLAY_SCALE)
   }, [state.blocks])
+
+  // Sync theme to renderer
+  useEffect(() => {
+    const renderer = rendererRef.current
+    if (!renderer) return
+    if (theme === 'light') {
+      renderer.setClearColor(0.94, 0.94, 0.96)
+      renderer.setBoundaryColor(0.3, 0.3, 0.4, 0.6)
+    } else {
+      renderer.setClearColor(0.12, 0.12, 0.15)
+      renderer.setBoundaryColor(0.4, 0.45, 0.5, 0.5)
+    }
+  }, [theme])
 
   // Sync boundary when gridSize changes
   useEffect(() => {

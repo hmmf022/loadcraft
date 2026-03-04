@@ -6,9 +6,11 @@ interface Props {
   dispatch: (action: EditorAction) => void
   canUndo: boolean
   canRedo: boolean
+  theme: 'dark' | 'light'
+  onToggleTheme: () => void
 }
 
-export function EditorToolBar({ state, dispatch, canUndo, canRedo }: Props) {
+export function EditorToolBar({ state, dispatch, canUndo, canRedo, theme, onToggleTheme }: Props) {
 
   return (
     <div className={styles.toolbar}>
@@ -62,6 +64,14 @@ export function EditorToolBar({ state, dispatch, canUndo, canRedo }: Props) {
         title="全クリア"
       >
         Clear
+      </button>
+      <div className={styles.separator} />
+      <button
+        className={styles.button}
+        onClick={onToggleTheme}
+        title="テーマ切替"
+      >
+        {theme === 'dark' ? 'Light' : 'Dark'}
       </button>
     </div>
   )

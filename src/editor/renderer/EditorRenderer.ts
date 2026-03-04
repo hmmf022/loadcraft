@@ -62,6 +62,8 @@ export class EditorRenderer {
 
   private viewTransition: ViewTransition
 
+  private clearColor = { r: 0.12, g: 0.12, b: 0.15 }
+
   private animationId = 0
   private disposed = false
 
@@ -167,14 +169,18 @@ export class EditorRenderer {
     this.boundaryIndexCount = boundary.indexCount
     this.boundaryBindGroupLayout = boundary.boundaryBindGroupLayout
 
-    // Boundary uniforms
+    // Boundary uniforms (96 bytes: mat4 + vec4 + vec2 + f32 + pad)
     this.boundaryUniformBuffer = this.device.createBuffer({
-      size: 80,
+      size: 96,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     })
-    const uniformData = new Float32Array(20)
+    const uniformData = new Float32Array(24)
     uniformData.set(mat4Identity(), 0)
     uniformData.set([0.4, 0.45, 0.5, 0.5], 16) // semi-transparent blue-gray
+    uniformData[20] = this.canvas.width || 1     // resolution.x
+    uniformData[21] = this.canvas.height || 1    // resolution.y
+    uniformData[22] = 2.0                        // lineWidth
+    uniformData[23] = 0                          // padding
     this.device.queue.writeBuffer(this.boundaryUniformBuffer, 0, uniformData)
 
     this.boundaryBindGroup = this.device.createBindGroup({
@@ -310,6 +316,9 @@ export class EditorRenderer {
     this.depthTexture.destroy()
     this.createDepthTexture()
     this.camera.setAspect(width / height)
+    // Update boundary uniform resolution
+    const res = new Float32Array([width, height])
+    this.device.queue.writeBuffer(this.boundaryUniformBuffer, 80, res)
   }
 
   private render = (): void => {
@@ -331,7 +340,7 @@ export class EditorRenderer {
         view: textureView,
         loadOp: 'clear',
         storeOp: 'store',
-        clearValue: { r: 0.12, g: 0.12, b: 0.15, a: 1.0 },
+        clearValue: { r: this.clearColor.r, g: this.clearColor.g, b: this.clearColor.b, a: 1.0 },
       }],
       depthStencilAttachment: {
         view: depthView,
@@ -426,6 +435,15 @@ export class EditorRenderer {
 
   stopRenderLoop(): void {
     cancelAnimationFrame(this.animationId)
+  }
+
+  setClearColor(r: number, g: number, b: number): void {
+    this.clearColor = { r, g, b }
+  }
+
+  setBoundaryColor(r: number, g: number, b: number, a: number): void {
+    const data = new Float32Array([r, g, b, a])
+    this.device.queue.writeBuffer(this.boundaryUniformBuffer, 64, data)
   }
 
   dispose(): void {
