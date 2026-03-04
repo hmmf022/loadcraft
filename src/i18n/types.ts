@@ -87,6 +87,7 @@ export interface TranslationDict {
     autoPackComplete: string
     interferenceFound: string
     noInterference: string
+    placementOutOfBounds: string
     rotationExceedsContainer: string
     rotationCollision: string
   }

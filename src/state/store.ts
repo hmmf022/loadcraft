@@ -216,8 +216,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Bounds check via AABB
     const { min, max } = result.aabb
-    if (min.x < 0 || min.y < 0 || min.z < 0) return
-    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return
+    if (min.x < 0 || min.y < 0 || min.z < 0 ||
+        max.x > grid.width || max.y > grid.height || max.z > grid.depth) {
+      get().addToast(getTranslation().toasts.placementOutOfBounds, 'error')
+      return
+    }
 
     const newPlacement: PlacedCargo = {
       instanceId,

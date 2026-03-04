@@ -23,7 +23,7 @@ export function CargoList() {
     if (position) {
       placeCargo(defId, position, rotationDeg)
     } else {
-      alert(t.cargoList.noPosition)
+      useAppStore.getState().addToast(t.cargoList.noPosition, 'error')
     }
   }
 

@@ -12,12 +12,16 @@ export class OccupancyMap {
   private cellsX: number
   private cellsZ: number
   private containerH: number
+  private containerW: number
+  private containerD: number
 
   constructor(widthCm: number, heightCm: number, depthCm: number, cellSize = 10) {
     this.cellSize = cellSize
     this.cellsX = Math.ceil(widthCm / cellSize)
     this.cellsZ = Math.ceil(depthCm / cellSize)
     this.containerH = heightCm
+    this.containerW = widthCm
+    this.containerD = depthCm
     this.heightMap = new Uint16Array(this.cellsX * this.cellsZ)
   }
 
@@ -82,11 +86,14 @@ export class OccupancyMap {
         }
         const xPos = cx * cs
         if (maxH + h <= this.containerH) {
+          const zPos = cz * cs
+          // 実寸法で境界チェック（セルサイズの切り上げによる超過を防ぐ）
+          if (xPos + w > this.containerW || zPos + d > this.containerD) continue
           // 画面奥(X=0)優先 → 同X帯なら低Y優先
           if (xPos < bestX || (xPos === bestX && maxH < bestY)) {
             bestX = xPos
             bestY = maxH
-            bestPos = { x: xPos, y: maxH, z: cz * cs }
+            bestPos = { x: xPos, y: maxH, z: zPos }
           }
         }
       }

@@ -87,6 +87,7 @@ export const en: TranslationDict = {
     autoPackComplete: 'All ${placed} items placed',
     interferenceFound: '${count} interference(s) detected',
     noInterference: 'No interference',
+    placementOutOfBounds: 'Cargo does not fit in container',
     rotationExceedsContainer: 'Rotated size does not fit in container',
     rotationCollision: 'Cannot rotate due to collision with other cargo',
   },

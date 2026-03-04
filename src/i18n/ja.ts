@@ -87,6 +87,7 @@ export const ja: TranslationDict = {
     autoPackComplete: '${placed} 個すべて配置完了',
     interferenceFound: '干渉 ${count} 件検出',
     noInterference: '干渉なし',
+    placementOutOfBounds: '貨物がコンテナに収まりません',
     rotationExceedsContainer: '回転後のサイズがコンテナに収まりません',
     rotationCollision: '他の荷物と衝突するため回転できません',
   },

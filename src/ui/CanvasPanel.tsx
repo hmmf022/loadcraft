@@ -567,7 +567,9 @@ export function CanvasPanel() {
           renderer.showGrid = state.showGrid
 
           // Update labels
-          renderer.updateLabels(state.placements, state.cargoDefs)
+          if (state.showLabels) {
+            renderer.updateLabels(state.placements, state.cargoDefs)
+          }
         }
 
         // Update selection highlight even if renderVersion didn't change
