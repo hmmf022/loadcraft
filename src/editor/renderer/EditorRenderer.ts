@@ -3,8 +3,7 @@ import { EditorCameraController } from './EditorCameraController'
 import { ViewTransition } from '../../renderer/ViewTransition'
 import { createCargoPipeline, createGhostPipeline, INSTANCE_BYTE_SIZE } from '../../renderer/pipelines/CargoPipeline'
 import { createGridPipeline } from '../../renderer/pipelines/GridPipeline'
-import { createBoundaryPipeline } from './BoundaryPipeline'
-import { mat4Translation, mat4Scaling, mat4Multiply, mat4Identity } from '../../utils/math'
+import { mat4Translation, mat4Scaling, mat4Multiply } from '../../utils/math'
 import type { EditorBlock } from '../state/types'
 
 function hexToRGBA(hex: string): [number, number, number, number] {
@@ -44,15 +43,6 @@ export class EditorRenderer {
   private ghostBuffer: GPUBuffer | null = null
   private ghostBindGroup: GPUBindGroup | null = null
   private ghostVisible = false
-
-  // Boundary pipeline
-  private boundaryPipeline!: GPURenderPipeline
-  private boundaryVertexBuffer!: GPUBuffer
-  private boundaryIndexBuffer!: GPUBuffer
-  private boundaryIndexCount = 0
-  private boundaryUniformBuffer!: GPUBuffer
-  private boundaryBindGroup!: GPUBindGroup
-  private boundaryBindGroupLayout!: GPUBindGroupLayout
 
   // Grid pipeline
   private gridPipeline!: GPURenderPipeline
@@ -158,36 +148,6 @@ export class EditorRenderer {
     const ghost = createGhostPipeline(this.device, this.format, this.cameraBindGroupLayout, cargo.instanceBindGroupLayout)
     this.ghostPipeline = ghost.pipeline
 
-    // Boundary pipeline (default 500x500x500)
-    const boundary = createBoundaryPipeline(
-      this.device, this.format, this.cameraBindGroupLayout,
-      500, 500, 500,
-    )
-    this.boundaryPipeline = boundary.pipeline
-    this.boundaryVertexBuffer = boundary.vertexBuffer
-    this.boundaryIndexBuffer = boundary.indexBuffer
-    this.boundaryIndexCount = boundary.indexCount
-    this.boundaryBindGroupLayout = boundary.boundaryBindGroupLayout
-
-    // Boundary uniforms (96 bytes: mat4 + vec4 + vec2 + f32 + pad)
-    this.boundaryUniformBuffer = this.device.createBuffer({
-      size: 96,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    })
-    const uniformData = new Float32Array(24)
-    uniformData.set(mat4Identity(), 0)
-    uniformData.set([0.4, 0.45, 0.5, 0.5], 16) // semi-transparent blue-gray
-    uniformData[20] = this.canvas.width || 1     // resolution.x
-    uniformData[21] = this.canvas.height || 1    // resolution.y
-    uniformData[22] = 2.0                        // lineWidth
-    uniformData[23] = 0                          // padding
-    this.device.queue.writeBuffer(this.boundaryUniformBuffer, 0, uniformData)
-
-    this.boundaryBindGroup = this.device.createBindGroup({
-      layout: this.boundaryBindGroupLayout,
-      entries: [{ binding: 0, resource: { buffer: this.boundaryUniformBuffer } }],
-    })
-
     // Grid pipeline
     const grid = createGridPipeline(this.device, this.format, this.cameraBindGroupLayout)
     this.gridPipeline = grid.pipeline
@@ -291,24 +251,6 @@ export class EditorRenderer {
     })
   }
 
-  updateBoundary(gridSize: number, maxCells: number): void {
-    const size = gridSize * maxCells
-
-    // Rebuild boundary geometry
-    const boundary = createBoundaryPipeline(
-      this.device, this.format, this.cameraBindGroupLayout,
-      size, size, size,
-    )
-    this.boundaryVertexBuffer.destroy()
-    this.boundaryIndexBuffer.destroy()
-    this.boundaryVertexBuffer = boundary.vertexBuffer
-    this.boundaryIndexBuffer = boundary.indexBuffer
-    this.boundaryIndexCount = boundary.indexCount
-
-    // Update camera target to center of boundary
-    this.camera.setState({ target: { x: size / 2, y: size / 2, z: size / 2 } })
-  }
-
   resize(width: number, height: number): void {
     if (width === 0 || height === 0) return
     this.canvas.width = width
@@ -316,9 +258,6 @@ export class EditorRenderer {
     this.depthTexture.destroy()
     this.createDepthTexture()
     this.camera.setAspect(width / height)
-    // Update boundary uniform resolution
-    const res = new Float32Array([width, height])
-    this.device.queue.writeBuffer(this.boundaryUniformBuffer, 80, res)
   }
 
   private render = (): void => {
@@ -382,28 +321,7 @@ export class EditorRenderer {
       ghostPass.end()
     }
 
-    // Pass 2: Boundary wireframe
-    const pass2 = commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view: textureView,
-        loadOp: 'load',
-        storeOp: 'store',
-      }],
-      depthStencilAttachment: {
-        view: depthView,
-        depthLoadOp: 'load',
-        depthStoreOp: 'store',
-      },
-    })
-    pass2.setPipeline(this.boundaryPipeline)
-    pass2.setBindGroup(0, this.cameraBindGroup)
-    pass2.setBindGroup(1, this.boundaryBindGroup)
-    pass2.setVertexBuffer(0, this.boundaryVertexBuffer)
-    pass2.setIndexBuffer(this.boundaryIndexBuffer, 'uint16')
-    pass2.drawIndexed(this.boundaryIndexCount)
-    pass2.end()
-
-    // Pass 3: Floor grid
+    // Pass 2: Floor grid
     const pass3 = commandEncoder.beginRenderPass({
       colorAttachments: [{
         view: textureView,
@@ -441,11 +359,6 @@ export class EditorRenderer {
     this.clearColor = { r, g, b }
   }
 
-  setBoundaryColor(r: number, g: number, b: number, a: number): void {
-    const data = new Float32Array([r, g, b, a])
-    this.device.queue.writeBuffer(this.boundaryUniformBuffer, 64, data)
-  }
-
   dispose(): void {
     this.disposed = true
     this.stopRenderLoop()
@@ -455,9 +368,6 @@ export class EditorRenderer {
     this.blockIndexBuffer?.destroy()
     this.instanceBuffer?.destroy()
     this.ghostBuffer?.destroy()
-    this.boundaryVertexBuffer?.destroy()
-    this.boundaryIndexBuffer?.destroy()
-    this.boundaryUniformBuffer?.destroy()
     this.gridVertexBuffer?.destroy()
     this.gridIndexBuffer?.destroy()
     this.depthTexture?.destroy()

@@ -6,6 +6,7 @@ import type { ShapeData } from '../../core/ShapeParser'
 import type { ShapeBlock } from '../../core/types'
 
 import { downloadJson } from '../../core/SaveLoad'
+import { useTranslation } from '../../i18n'
 import styles from './ExportDialog.module.css'
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
 
 export function ExportDialog({ state, dispatch }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const { t } = useTranslation()
 
   const handleExport = () => {
     // Compute origin offset (min x,y,z)
@@ -83,10 +85,10 @@ export function ExportDialog({ state, dispatch }: Props) {
             weightKg: data.weightKg,
           })
         } else {
-          alert('無効なシェイプファイルです')
+          alert(t.editor.invalidShapeFile)
         }
       } catch {
-        alert('ファイルの読み込みに失敗しました')
+        alert(t.editor.fileReadError)
       }
     }
     reader.readAsText(file)
@@ -95,20 +97,20 @@ export function ExportDialog({ state, dispatch }: Props) {
 
   return (
     <div className={styles.container}>
-      <div className={styles.label}>File</div>
+      <div className={styles.label}>{t.editor.file}</div>
       <div className={styles.buttons}>
         <button
           className={styles.button}
           onClick={handleExport}
           disabled={state.blocks.size === 0}
         >
-          Export JSON
+          {t.editor.exportJson}
         </button>
         <button
           className={styles.button}
           onClick={handleImport}
         >
-          Import JSON
+          {t.editor.importJson}
         </button>
       </div>
       <input

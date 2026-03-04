@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { useAppStore } from '../state/store'
 import { parseCargoFile } from '../core/ImportParser'
 import { loadCarPartsSamples } from '../data/loadCarPartsSamples'
+import { useTranslation, interpolate } from '../i18n'
 import styles from './CargoEditor.module.css'
 
 interface FormState {
@@ -30,6 +31,7 @@ export function CargoEditor() {
   const container = useAppStore((s) => s.container)
   const addToast = useAppStore((s) => s.addToast)
   const importInputRef = useRef<HTMLInputElement>(null)
+  const { t } = useTranslation()
 
   const handleChange = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }))
@@ -37,23 +39,23 @@ export function CargoEditor() {
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {}
-    if (!form.name.trim()) newErrors['name'] = '名前を入力してください'
+    if (!form.name.trim()) newErrors['name'] = t.cargoEditor.nameRequired
 
     const w = parseFloat(form.widthCm)
     const h = parseFloat(form.heightCm)
     const d = parseFloat(form.depthCm)
     const wt = parseFloat(form.weightKg)
 
-    if (isNaN(w) || w <= 0) newErrors['widthCm'] = '幅は0より大きい値を入力してください'
-    else if (w > container.widthCm) newErrors['widthCm'] = 'コンテナの幅を超えています'
+    if (isNaN(w) || w <= 0) newErrors['widthCm'] = t.cargoEditor.widthPositive
+    else if (w > container.widthCm) newErrors['widthCm'] = t.cargoEditor.widthExceeds
 
-    if (isNaN(h) || h <= 0) newErrors['heightCm'] = '高さは0より大きい値を入力してください'
-    else if (h > container.heightCm) newErrors['heightCm'] = 'コンテナの高さを超えています'
+    if (isNaN(h) || h <= 0) newErrors['heightCm'] = t.cargoEditor.heightPositive
+    else if (h > container.heightCm) newErrors['heightCm'] = t.cargoEditor.heightExceeds
 
-    if (isNaN(d) || d <= 0) newErrors['depthCm'] = '奥行は0より大きい値を入力してください'
-    else if (d > container.depthCm) newErrors['depthCm'] = 'コンテナの奥行を超えています'
+    if (isNaN(d) || d <= 0) newErrors['depthCm'] = t.cargoEditor.depthPositive
+    else if (d > container.depthCm) newErrors['depthCm'] = t.cargoEditor.depthExceeds
 
-    if (isNaN(wt) || wt <= 0) newErrors['weightKg'] = '重量は0より大きい値を入力してください'
+    if (isNaN(wt) || wt <= 0) newErrors['weightKg'] = t.cargoEditor.weightPositive
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -85,12 +87,12 @@ export function CargoEditor() {
       const defs = await loadCarPartsSamples()
       if (defs.length > 0) {
         importCargoDefs(defs)
-        addToast(`${defs.length}件のサンプルを読み込みました`, 'success')
+        addToast(interpolate(t.cargoEditor.samplesLoaded, { count: defs.length }), 'success')
       } else {
-        addToast('サンプルの読み込みに失敗しました', 'error')
+        addToast(t.cargoEditor.samplesError, 'error')
       }
     } catch {
-      addToast('サンプルの読み込みに失敗しました', 'error')
+      addToast(t.cargoEditor.samplesError, 'error')
     }
   }
 
@@ -103,10 +105,10 @@ export function CargoEditor() {
       const result = parseCargoFile(reader.result as string, file.name)
       if (result.defs.length > 0) {
         importCargoDefs(result.defs)
-        addToast(`${result.defs.length}件インポートしました`, 'success')
+        addToast(interpolate(t.cargoEditor.importedCount, { count: result.defs.length }), 'success')
       }
       if (result.errors.length > 0) {
-        addToast(`インポートエラー: ${result.errors[0]}`, 'error')
+        addToast(interpolate(t.cargoEditor.importError, { error: result.errors[0]! }), 'error')
       }
     }
     reader.readAsText(file)
@@ -117,20 +119,20 @@ export function CargoEditor() {
   return (
     <form onSubmit={handleSubmit} className={styles.form}>
       <div className={styles.field}>
-        <label className={styles.label}>名前</label>
+        <label className={styles.label}>{t.cargoEditor.name}</label>
         <input
           type="text"
           value={form.name}
           onChange={handleChange('name')}
           className={styles.input}
-          placeholder="荷物名"
+          placeholder={t.cargoEditor.namePlaceholder}
         />
         {errors['name'] && <span className={styles.error}>{errors['name']}</span>}
       </div>
 
       <div className={styles.row}>
         <div className={styles.field}>
-          <label className={styles.label}>幅 (cm)</label>
+          <label className={styles.label}>{t.cargoEditor.width}</label>
           <input
             type="number"
             value={form.widthCm}
@@ -142,7 +144,7 @@ export function CargoEditor() {
           {errors['widthCm'] && <span className={styles.error}>{errors['widthCm']}</span>}
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>高さ (cm)</label>
+          <label className={styles.label}>{t.cargoEditor.height}</label>
           <input
             type="number"
             value={form.heightCm}
@@ -154,7 +156,7 @@ export function CargoEditor() {
           {errors['heightCm'] && <span className={styles.error}>{errors['heightCm']}</span>}
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>奥行 (cm)</label>
+          <label className={styles.label}>{t.cargoEditor.depth}</label>
           <input
             type="number"
             value={form.depthCm}
@@ -169,7 +171,7 @@ export function CargoEditor() {
 
       <div className={styles.row}>
         <div className={styles.field}>
-          <label className={styles.label}>重量 (kg)</label>
+          <label className={styles.label}>{t.cargoEditor.weight}</label>
           <input
             type="number"
             value={form.weightKg}
@@ -181,7 +183,7 @@ export function CargoEditor() {
           {errors['weightKg'] && <span className={styles.error}>{errors['weightKg']}</span>}
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>色</label>
+          <label className={styles.label}>{t.cargoEditor.color}</label>
           <input
             type="color"
             value={form.color}
@@ -193,13 +195,13 @@ export function CargoEditor() {
 
       <div className={styles.row}>
         <button type="submit" className={styles.addButton}>
-          追加
+          {t.cargoEditor.add}
         </button>
         <button type="button" className={styles.importButton} onClick={handleImportClick}>
-          インポート
+          {t.cargoEditor.import}
         </button>
         <button type="button" className={styles.importButton} onClick={handleLoadSamples}>
-          サンプル
+          {t.cargoEditor.samples}
         </button>
         <input
           ref={importInputRef}

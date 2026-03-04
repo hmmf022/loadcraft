@@ -1,4 +1,5 @@
 import type { EditorState, EditorAction } from '../state/types'
+import { useTranslation } from '../../i18n'
 import styles from './EditorToolBar.module.css'
 
 interface Props {
@@ -11,67 +12,74 @@ interface Props {
 }
 
 export function EditorToolBar({ state, dispatch, canUndo, canRedo, theme, onToggleTheme }: Props) {
+  const { t, language, setLanguage } = useTranslation()
 
   return (
     <div className={styles.toolbar}>
       <button
         className={`${styles.button} ${state.currentTool === 'place' ? styles.active : ''}`}
         onClick={() => dispatch({ type: 'SET_TOOL', tool: 'place' })}
-        title="配置 (1)"
+        title={t.editor.placeTitle}
       >
-        Place
+        {t.editor.place}
       </button>
       <button
         className={`${styles.button} ${state.currentTool === 'erase' ? styles.active : ''}`}
         onClick={() => dispatch({ type: 'SET_TOOL', tool: 'erase' })}
-        title="削除 (2)"
+        title={t.editor.eraseTitle}
       >
-        Erase
+        {t.editor.erase}
       </button>
       <button
         className={`${styles.button} ${state.currentTool === 'paint' ? styles.active : ''}`}
         onClick={() => dispatch({ type: 'SET_TOOL', tool: 'paint' })}
-        title="塗替 (3)"
+        title={t.editor.paintTitle}
       >
-        Paint
+        {t.editor.paint}
       </button>
       <div className={styles.separator} />
       <button
         className={styles.button}
         disabled={!canUndo}
         onClick={() => dispatch({ type: 'UNDO' })}
-        title="元に戻す (Ctrl+Z)"
+        title={t.editor.undoTitle}
       >
-        Undo
+        {t.editor.undo}
       </button>
       <button
         className={styles.button}
         disabled={!canRedo}
         onClick={() => dispatch({ type: 'REDO' })}
-        title="やり直し (Ctrl+Y)"
+        title={t.editor.redoTitle}
       >
-        Redo
+        {t.editor.redo}
       </button>
       <div className={styles.separator} />
       <button
         className={styles.button}
         disabled={state.blocks.size === 0}
         onClick={() => {
-          if (state.blocks.size > 0 && confirm('全ブロックをクリアしますか？')) {
+          if (state.blocks.size > 0 && confirm(t.editor.clearConfirm)) {
             dispatch({ type: 'CLEAR_ALL' })
           }
         }}
-        title="全クリア"
+        title={t.editor.clearTitle}
       >
-        Clear
+        {t.editor.clear}
       </button>
       <div className={styles.separator} />
       <button
         className={styles.button}
         onClick={onToggleTheme}
-        title="テーマ切替"
+        title={t.editor.themeToggle}
       >
-        {theme === 'dark' ? 'Light' : 'Dark'}
+        {theme === 'dark' ? 'Dark' : 'Light'}
+      </button>
+      <button
+        className={styles.button}
+        onClick={() => setLanguage(language === 'ja' ? 'en' : 'ja')}
+      >
+        {t.common.langLabel}
       </button>
     </div>
   )

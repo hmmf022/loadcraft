@@ -27,12 +27,12 @@
 }
 
 .swatch:hover {
-  border-color: rgba(255, 255, 255, 0.4);
+  border-color: var(--text-secondary);
 }
 
 .selected {
-  border-color: #fff;
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 4px var(--accent);
 }
 
 .customRow {

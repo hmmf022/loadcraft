@@ -1,4 +1,8 @@
+import { useTranslation } from '../i18n'
+
 export function WebGPUFallback() {
+  const { t } = useTranslation()
+
   return (
     <div style={{
       display: 'flex',
@@ -10,12 +14,12 @@ export function WebGPUFallback() {
       color: 'var(--text-primary)',
       textAlign: 'center',
     }}>
-      <h2 style={{ marginBottom: '16px' }}>WebGPU is not available</h2>
+      <h2 style={{ marginBottom: '16px' }}>{t.webgpuFallback.title}</h2>
       <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>
-        This application requires WebGPU for 3D rendering.
+        {t.webgpuFallback.description}
       </p>
       <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-        Please use a supported browser:
+        {t.webgpuFallback.browserList}
       </p>
       <ul style={{
         listStyle: 'none',

@@ -2,12 +2,14 @@ import { useAppStore } from '../state/store'
 import type { Vec3 } from '../core/types'
 import { OccupancyMap } from '../core/OccupancyMap'
 import { computeRotatedAABB } from '../core/Voxelizer'
+import { useTranslation } from '../i18n'
 import styles from './CargoList.module.css'
 
 export function CargoList() {
   const cargoDefs = useAppStore((s) => s.cargoDefs)
   const removeCargoDef = useAppStore((s) => s.removeCargoDef)
   const placeCargo = useAppStore((s) => s.placeCargo)
+  const { t } = useTranslation()
 
   const handlePlace = (defId: string) => {
     const state = useAppStore.getState()
@@ -21,7 +23,7 @@ export function CargoList() {
     if (position) {
       placeCargo(defId, position, rotationDeg)
     } else {
-      alert('配置可能な位置が見つかりません')
+      alert(t.cargoList.noPosition)
     }
   }
 
@@ -29,7 +31,7 @@ export function CargoList() {
     const state = useAppStore.getState()
     const hasPlacement = state.placements.some((p) => p.cargoDefId === defId)
     if (hasPlacement) {
-      if (!confirm('この貨物定義の配置も同時に削除されます。続行しますか？')) return
+      if (!confirm(t.cargoList.confirmDeleteDef)) return
     }
     removeCargoDef(defId)
   }
@@ -52,7 +54,7 @@ export function CargoList() {
   if (cargoDefs.length === 0) {
     return (
       <div className={styles.empty}>
-        貨物が定義されていません。上のフォームから貨物を追加してください。
+        {t.cargoList.empty}
       </div>
     )
   }
@@ -85,13 +87,13 @@ export function CargoList() {
               className={styles.placeButton}
               onClick={() => handlePlace(def.id)}
             >
-              配置
+              {t.cargoList.place}
             </button>
             <button
               className={styles.deleteButton}
               onClick={() => handleDelete(def.id)}
             >
-              削除
+              {t.cargoList.delete}
             </button>
           </div>
         </div>

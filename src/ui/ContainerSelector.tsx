@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '../state/store'
 import { CONTAINER_PRESETS } from '../core/types'
+import { useTranslation } from '../i18n'
 import styles from './ContainerSelector.module.css'
 
 const CUSTOM_IDX = CONTAINER_PRESETS.length
@@ -12,11 +13,12 @@ export function ContainerSelector() {
   const [customD, setCustomD] = useState(300)
   const setContainer = useAppStore((s) => s.setContainer)
   const container = useAppStore((s) => s.container)
+  const { t } = useTranslation()
 
   const confirmChange = (): boolean => {
     const placements = useAppStore.getState().placements
     if (placements.length > 0) {
-      if (!confirm('コンテナを変更すると、すべての配置がクリアされます。続行しますか？')) {
+      if (!confirm(t.container.confirmChange)) {
         return false
       }
     }
@@ -69,13 +71,13 @@ export function ContainerSelector() {
         {CONTAINER_PRESETS.map((p, i) => (
           <option key={p.name} value={i}>{p.name}</option>
         ))}
-        <option value={CUSTOM_IDX}>カスタム</option>
+        <option value={CUSTOM_IDX}>{t.container.custom}</option>
       </select>
 
       {isCustom ? (
         <div className={styles.customInputs}>
           <div className={styles.inputRow}>
-            <label className={styles.inputLabel}>幅 (cm)</label>
+            <label className={styles.inputLabel}>{t.container.width}</label>
             <input
               type="number"
               className={styles.input}
@@ -86,7 +88,7 @@ export function ContainerSelector() {
             />
           </div>
           <div className={styles.inputRow}>
-            <label className={styles.inputLabel}>高さ (cm)</label>
+            <label className={styles.inputLabel}>{t.container.height}</label>
             <input
               type="number"
               className={styles.input}
@@ -97,7 +99,7 @@ export function ContainerSelector() {
             />
           </div>
           <div className={styles.inputRow}>
-            <label className={styles.inputLabel}>奥行 (cm)</label>
+            <label className={styles.inputLabel}>{t.container.depth}</label>
             <input
               type="number"
               className={styles.input}
@@ -108,7 +110,7 @@ export function ContainerSelector() {
             />
           </div>
           <button className={styles.applyButton} onClick={handleApplyCustom}>
-            適用
+            {t.container.apply}
           </button>
         </div>
       ) : (

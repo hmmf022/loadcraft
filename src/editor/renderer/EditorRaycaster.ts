@@ -62,7 +62,6 @@ export function pickFloor(
   canvasW: number, canvasH: number,
   inverseViewProj: Float32Array,
   gridSize: number,
-  maxCells: number,
 ): FloorPickResult | null {
   const [ndcX, ndcY] = screenToNDC(screenX, screenY, canvasW, canvasH)
   const ray = constructRay(ndcX, ndcY, inverseViewProj)
@@ -74,8 +73,8 @@ export function pickFloor(
   const x = Math.floor(hit.x / gs)
   const z = Math.floor(hit.z / gs)
 
-  // Bounds check
-  if (x < 0 || z < 0 || x >= maxCells || z >= maxCells) return null
+  // Bounds check (only enforce non-negative)
+  if (x < 0 || z < 0) return null
 
   return { x, y: 0, z }
 }
@@ -87,7 +86,6 @@ export function getPlacementTarget(
   inverseViewProj: Float32Array,
   blocks: Map<string, EditorBlock>,
   gridSize: number,
-  maxCells: number,
   newBlockSize?: { w: number; h: number; d: number },
 ): { x: number; y: number; z: number } | null {
   const nw = newBlockSize?.w ?? 1
@@ -127,16 +125,15 @@ export function getPlacementTarget(
       z = hitBlock.z - nd
     }
 
-    // Bounds check for new block
-    if (x >= 0 && y >= 0 && z >= 0 &&
-        x + nw <= maxCells && y + nh <= maxCells && z + nd <= maxCells) {
+    // Bounds check for new block (only enforce non-negative)
+    if (x >= 0 && y >= 0 && z >= 0) {
       return { x, y, z }
     }
   }
 
   // Fall back to floor pick
-  const floor = pickFloor(screenX, screenY, canvasW, canvasH, inverseViewProj, gridSize, maxCells)
-  if (floor && floor.x + nw <= maxCells && floor.z + nd <= maxCells) {
+  const floor = pickFloor(screenX, screenY, canvasW, canvasH, inverseViewProj, gridSize)
+  if (floor) {
     return floor
   }
   return null

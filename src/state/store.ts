@@ -12,6 +12,7 @@ import type { CogDeviation } from '../core/WeightCalculator'
 import { checkAllSupports } from '../core/GravityChecker'
 import type { SupportResult } from '../core/GravityChecker'
 import { serializeSaveData, downloadJson } from '../core/SaveLoad'
+import { getTranslation, interpolate } from '../i18n'
 import type { SaveData } from '../core/SaveLoad'
 import type { VoxelizeResult } from '../core/Voxelizer'
 import type { VoxelGrid } from '../core/VoxelGrid'
@@ -345,7 +346,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const { min: m2, max: x2 } = newResult.aabb
       if (m2.x < 0 || m2.y < 0 || m2.z < 0 ||
           x2.x > grid.width || x2.y > grid.height || x2.z > grid.depth) {
-        get().addToast('回転後のサイズがコンテナに収まりません', 'error')
+        get().addToast(getTranslation().toasts.rotationExceedsContainer, 'error')
         return
       }
     }
@@ -357,7 +358,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (hasCollision) {
         // Restore old
         fillFromResult(grid, oldResult, instanceId)
-        get().addToast('他の荷物と衝突するため回転できません', 'error')
+        get().addToast(getTranslation().toasts.rotationCollision, 'error')
         return
       }
     }
@@ -430,7 +431,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   autoPackCargo: () => {
     const state = get()
     if (state.cargoDefs.length === 0) {
-      state.addToast('荷物が定義されていません', 'error')
+      state.addToast(getTranslation().toasts.noCargoForPack, 'error')
       return
     }
 
@@ -443,7 +444,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     )
 
     if (result.placements.length === 0) {
-      state.addToast('配置可能な位置が見つかりません', 'error')
+      state.addToast(getTranslation().toasts.noPlaceablePosition, 'error')
       return
     }
 
@@ -477,10 +478,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     scheduleAnalytics()
 
     const failCount = result.failedDefIds.length
+    const tt = getTranslation()
     if (failCount > 0) {
-      state.addToast(`${result.placements.length} 個配置、${failCount} 個配置不可`, 'info')
+      state.addToast(interpolate(tt.toasts.autoPackPartial, { placed: result.placements.length, failed: failCount }), 'info')
     } else {
-      state.addToast(`${result.placements.length} 個すべて配置完了`, 'success')
+      state.addToast(interpolate(tt.toasts.autoPackComplete, { placed: result.placements.length }), 'success')
     }
   },
 
@@ -547,10 +549,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get()
     const result = checkInterference(state.placements, state.cargoDefs)
     set({ interferenceResults: result.pairs })
+    const tt = getTranslation()
     if (result.pairs.length > 0) {
-      state.addToast(`干渉 ${result.pairs.length} 件検出`, 'error')
+      state.addToast(interpolate(tt.toasts.interferenceFound, { count: result.pairs.length }), 'error')
     } else {
-      state.addToast('干渉なし', 'success')
+      state.addToast(tt.toasts.noInterference, 'success')
     }
   },
 

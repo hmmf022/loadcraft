@@ -3,6 +3,7 @@ import { EditorRenderer } from '../renderer/EditorRenderer'
 import { getPlacementTarget, getBlockTarget } from '../renderer/EditorRaycaster'
 import { DISPLAY_SCALE, blocksOverlap } from '../state/types'
 import type { EditorState, EditorAction } from '../state/types'
+import { useTranslation } from '../../i18n'
 import styles from './EditorCanvas.module.css'
 
 interface Props {
@@ -12,18 +13,18 @@ interface Props {
 }
 
 const VIEW_PRESETS = [
-  { name: 'Front', theta: 0,          phi: Math.PI / 2, targetYFactor: 0.15 },
-  { name: 'Right', theta: Math.PI / 2, phi: Math.PI / 2, targetYFactor: 0.15 },
-  { name: 'Top',   theta: 0,          phi: 0.01,        targetYFactor: 0 },
-  { name: 'Iso',   theta: Math.PI / 4, phi: Math.PI / 4, targetYFactor: 0.5 },
-] as const
+  { key: 'front' as const, theta: 0,          phi: Math.PI / 2, targetYFactor: 0.15 },
+  { key: 'right' as const, theta: Math.PI / 2, phi: Math.PI / 2, targetYFactor: 0.15 },
+  { key: 'top' as const,   theta: 0,          phi: 0.01,        targetYFactor: 0 },
+  { key: 'iso' as const,   theta: Math.PI / 4, phi: Math.PI / 4, targetYFactor: 0.5 },
+]
 
 export function EditorCanvas({ state, dispatch, theme }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<EditorRenderer | null>(null)
   const [loading, setLoading] = useState(true)
-  const [activeView, setActiveView] = useState('Iso')
+  const [activeView, setActiveView] = useState('iso')
 
   // Keep refs to latest state for callbacks
   const stateRef = useRef(state)
@@ -45,7 +46,7 @@ export function EditorCanvas({ state, dispatch, theme }: Props) {
       const brushSize = { w: s.brushW, h: s.brushH, d: s.brushD }
       const target = getPlacementTarget(
         screenX, screenY, canvas.width, canvas.height, invVP,
-        s.blocks, DISPLAY_SCALE, s.maxCells, brushSize,
+        s.blocks, DISPLAY_SCALE, brushSize,
       )
       if (target) {
         dispatchRef.current({ type: 'PLACE_BLOCK', ...target, ...brushSize, color: s.currentColor })
@@ -81,7 +82,7 @@ export function EditorCanvas({ state, dispatch, theme }: Props) {
       const brushSize = { w: s.brushW, h: s.brushH, d: s.brushD }
       const target = getPlacementTarget(
         screenX, screenY, canvas.width, canvas.height, invVP,
-        s.blocks, DISPLAY_SCALE, s.maxCells, brushSize,
+        s.blocks, DISPLAY_SCALE, brushSize,
       )
       if (target) {
         const candidate = { x: target.x, y: target.y, z: target.z, ...brushSize, color: '' }
@@ -139,9 +140,6 @@ export function EditorCanvas({ state, dispatch, theme }: Props) {
         }
       }
 
-      // Set initial boundary
-      renderer.updateBoundary(DISPLAY_SCALE, stateRef.current.maxCells)
-
       renderer.startRenderLoop()
     }
 
@@ -167,19 +165,10 @@ export function EditorCanvas({ state, dispatch, theme }: Props) {
     if (!renderer) return
     if (theme === 'light') {
       renderer.setClearColor(0.94, 0.94, 0.96)
-      renderer.setBoundaryColor(0.3, 0.3, 0.4, 0.6)
     } else {
       renderer.setClearColor(0.12, 0.12, 0.15)
-      renderer.setBoundaryColor(0.4, 0.45, 0.5, 0.5)
     }
   }, [theme])
-
-  // Sync boundary when gridSize changes
-  useEffect(() => {
-    const renderer = rendererRef.current
-    if (!renderer) return
-    renderer.updateBoundary(DISPLAY_SCALE, state.maxCells)
-  }, [state.maxCells])
 
   // ResizeObserver
   useEffect(() => {
@@ -300,11 +289,34 @@ export function EditorCanvas({ state, dispatch, theme }: Props) {
   const handleViewPreset = (preset: typeof VIEW_PRESETS[number]) => {
     const renderer = rendererRef.current
     if (!renderer) return
-    const size = DISPLAY_SCALE * stateRef.current.maxCells
-    const center = size / 2
-    const target = { x: center, y: size * preset.targetYFactor, z: center }
+    const s = stateRef.current
+    let cx = 500, cz = 500, size = 1000
+    if (s.blocks.size > 0) {
+      let minX = Infinity, minY = Infinity, minZ = Infinity
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+      for (const b of s.blocks.values()) {
+        if (b.x < minX) minX = b.x
+        if (b.y < minY) minY = b.y
+        if (b.z < minZ) minZ = b.z
+        if (b.x + b.w > maxX) maxX = b.x + b.w
+        if (b.y + b.h > maxY) maxY = b.y + b.h
+        if (b.z + b.d > maxZ) maxZ = b.z + b.d
+      }
+      cx = ((minX + maxX) / 2) * DISPLAY_SCALE
+      cz = ((minZ + maxZ) / 2) * DISPLAY_SCALE
+      size = Math.max(maxX - minX, maxY - minY, maxZ - minZ) * DISPLAY_SCALE
+    }
+    const target = { x: cx, y: size * preset.targetYFactor, z: cz }
     renderer.animateToPreset(preset.theta, preset.phi, target)
-    setActiveView(preset.name)
+    setActiveView(preset.key)
+  }
+
+  const { t } = useTranslation()
+  const viewLabels: Record<string, string> = {
+    front: t.viewButtons.front,
+    right: t.viewButtons.right,
+    top: t.viewButtons.top,
+    iso: t.viewButtons.iso,
   }
 
   return (
@@ -314,11 +326,11 @@ export function EditorCanvas({ state, dispatch, theme }: Props) {
         <div className={styles.viewButtons}>
           {VIEW_PRESETS.map((p) => (
             <button
-              key={p.name}
-              className={`${styles.viewButton} ${activeView === p.name ? styles.viewButtonActive : ''}`}
+              key={p.key}
+              className={`${styles.viewButton} ${activeView === p.key ? styles.viewButtonActive : ''}`}
               onClick={() => handleViewPreset(p)}
             >
-              {p.name}
+              {viewLabels[p.key]}
             </button>
           ))}
         </div>

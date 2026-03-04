@@ -1,4 +1,5 @@
 import { useAppStore } from '../state/store'
+import { useTranslation, interpolate } from '../i18n'
 import styles from './StatsPanel.module.css'
 
 export function StatsPanel() {
@@ -19,27 +20,28 @@ export function StatsPanel() {
       ? styles.barWarning
       : styles.barNormal
 
+  const { t } = useTranslation()
   const unsupportedCount = Array.from(supportResults.values()).filter((r) => !r.supported).length
 
   const warnings: string[] = []
   if (weightResult.overweight) {
-    warnings.push('過積載: 最大積載量を超えています')
+    warnings.push(t.stats.overweight)
   }
   if (cogDeviation && !cogDeviation.isBalanced) {
-    warnings.push('重心偏り: コンテナ中心から大きくずれています')
+    warnings.push(t.stats.cogDeviation)
   }
   if (unsupportedCount > 0) {
-    warnings.push(`浮遊荷物: ${unsupportedCount}個の荷物が十分に支持されていません`)
+    warnings.push(interpolate(t.stats.floatingCargo, { count: unsupportedCount }))
   }
   for (const pair of interferenceResults) {
-    warnings.push(`干渉: ${pair.name1} ↔ ${pair.name2}`)
+    warnings.push(interpolate(t.stats.interference, { name1: pair.name1, name2: pair.name2 }))
   }
 
   return (
     <div className={styles.panel}>
       <div className={styles.stat}>
         <div className={styles.statHeader}>
-          <span className={styles.statLabel}>重量</span>
+          <span className={styles.statLabel}>{t.stats.weight}</span>
           <span className={styles.statValue}>
             {weightResult.totalWeightKg.toFixed(1)} / {container.maxPayloadKg} kg
           </span>
@@ -54,7 +56,7 @@ export function StatsPanel() {
 
       <div className={styles.stat}>
         <div className={styles.statHeader}>
-          <span className={styles.statLabel}>充填率</span>
+          <span className={styles.statLabel}>{t.stats.fillRate}</span>
           <span className={styles.statValue}>{weightResult.fillRatePercent.toFixed(1)}%</span>
         </div>
         <div className={styles.barBg}>
@@ -67,7 +69,7 @@ export function StatsPanel() {
 
       {placements.length > 0 && (
         <div className={styles.stat}>
-          <span className={styles.statLabel}>重心位置</span>
+          <span className={styles.statLabel}>{t.stats.cog}</span>
           <span className={styles.statValueSmall}>
             X: {weightResult.centerOfGravity.x.toFixed(1)},
             Y: {weightResult.centerOfGravity.y.toFixed(1)},
@@ -77,7 +79,7 @@ export function StatsPanel() {
       )}
 
       <div className={styles.stat}>
-        <span className={styles.statLabel}>配置数</span>
+        <span className={styles.statLabel}>{t.stats.placementCount}</span>
         <span className={styles.statValue}>{placements.length}</span>
       </div>
 

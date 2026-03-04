@@ -16,6 +16,9 @@
   --danger-hover: #ef3a3a;
   --border: #3a3a50;
   --input-bg: #2a2a3e;
+  --surface: rgba(40, 40, 55, 0.85);
+  --surface-hover: rgba(60, 60, 75, 0.9);
+  --toolbar-bg: rgba(30, 30, 30, 0.85);
   --sidebar-width: 300px;
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
@@ -30,6 +33,9 @@
   --accent-hover: #2a7edf;
   --border: #c8c8d8;
   --input-bg: #ffffff;
+  --surface: rgba(220, 220, 230, 0.85);
+  --surface-hover: rgba(200, 200, 215, 0.9);
+  --toolbar-bg: rgba(240, 240, 245, 0.85);
 }
 
 html, body, #root {

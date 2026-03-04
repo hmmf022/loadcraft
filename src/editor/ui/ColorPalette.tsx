@@ -1,4 +1,5 @@
 import type { EditorState, EditorAction } from '../state/types'
+import { useTranslation } from '../../i18n'
 import styles from './ColorPalette.module.css'
 
 const PRESET_COLORS = [
@@ -14,9 +15,11 @@ interface Props {
 }
 
 export function ColorPalette({ state, dispatch }: Props) {
+  const { t } = useTranslation()
+
   return (
     <div className={styles.container}>
-      <div className={styles.label}>Color</div>
+      <div className={styles.label}>{t.editor.color}</div>
       <div className={styles.grid}>
         {PRESET_COLORS.map((color) => (
           <button

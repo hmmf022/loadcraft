@@ -58,7 +58,7 @@ export function blocksOverlap(a: EditorBlock, b: EditorBlock): boolean {
 export const initialEditorState: EditorState = {
   blocks: new Map(),
   gridSize: 1,
-  maxCells: 100,
+  maxCells: 10000,
   currentTool: 'place',
   currentColor: '#4a90d9',
   shapeName: 'New Shape',

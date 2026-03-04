@@ -1,4 +1,5 @@
 import { useAppStore } from '../state/store'
+import { useTranslation } from '../i18n'
 import styles from './PlacementControls.module.css'
 
 export function PlacementControls() {
@@ -9,11 +10,12 @@ export function PlacementControls() {
   const setSelectedInstanceId = useAppStore((s) => s.setSelectedInstanceId)
   const rotateCargo = useAppStore((s) => s.rotateCargo)
   const dropCargo = useAppStore((s) => s.dropCargo)
+  const { t } = useTranslation()
 
   if (selectedInstanceId === null) {
     return (
       <div className={styles.panel}>
-        <div className={styles.placeholder}>貨物を選択してください</div>
+        <div className={styles.placeholder}>{t.placement.selectCargo}</div>
       </div>
     )
   }
@@ -22,7 +24,7 @@ export function PlacementControls() {
   if (!placement) {
     return (
       <div className={styles.panel}>
-        <div className={styles.placeholder}>貨物を選択してください</div>
+        <div className={styles.placeholder}>{t.placement.selectCargo}</div>
       </div>
     )
   }
@@ -49,25 +51,25 @@ export function PlacementControls() {
         </div>
         <div className={styles.infoDetails}>
           <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>位置</span>
+            <span className={styles.detailLabel}>{t.placement.position}</span>
             <span className={styles.detailValue}>
               X:{pos.x} Y:{pos.y} Z:{pos.z}
             </span>
           </div>
           <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>寸法</span>
+            <span className={styles.detailLabel}>{t.placement.dimensions}</span>
             <span className={styles.detailValue}>
               {def.widthCm} x {def.heightCm} x {def.depthCm} cm
             </span>
           </div>
           <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>重量</span>
+            <span className={styles.detailLabel}>{t.placement.weight}</span>
             <span className={styles.detailValue}>{def.weightKg} kg</span>
           </div>
         </div>
 
         <div className={styles.rotationSection}>
-          <div className={styles.rotationLabel}>回転</div>
+          <div className={styles.rotationLabel}>{t.placement.rotation}</div>
           <div className={styles.rotationRow}>
             <span className={styles.rotationAxis}>RX: {rot.x}°</span>
             <button className={styles.rotateButton} onClick={() => handleRotate('x', 90)}>+90°</button>
@@ -87,19 +89,19 @@ export function PlacementControls() {
             className={styles.dropButton}
             onClick={() => dropCargo(selectedInstanceId)}
           >
-            落下
+            {t.placement.drop}
           </button>
           <button
             className={styles.deleteButton}
             onClick={() => removePlacement(selectedInstanceId)}
           >
-            削除
+            {t.placement.delete}
           </button>
           <button
             className={styles.deselectButton}
             onClick={() => setSelectedInstanceId(null)}
           >
-            選択解除
+            {t.placement.deselect}
           </button>
         </div>
       </div>

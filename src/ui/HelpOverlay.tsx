@@ -1,27 +1,30 @@
+import { useTranslation } from '../i18n'
 import styles from './HelpOverlay.module.css'
 
-const HELP_ITEMS: { key: string; desc: string }[] = [
-  { key: '左ドラッグ', desc: 'カメラ回転' },
-  { key: '右ドラッグ / 中ボタン', desc: 'カメラ移動' },
-  { key: 'ホイール', desc: 'ズーム' },
-  { key: 'クリック', desc: '荷物を選択' },
-  { key: '左ドラッグ（選択時）', desc: '荷物を移動' },
-  { key: 'Shift+左ドラッグ（選択時）', desc: '荷物を自由回転' },
-  { key: 'D&D（サイドバーから）', desc: '荷物を配置' },
-  { key: 'R / Shift+R', desc: 'Y軸回転 (+90° / -90°)' },
-  { key: 'T / Shift+T', desc: 'X軸回転 (+90° / -90°)' },
-  { key: 'F / Shift+F', desc: 'Z軸回転 (+90° / -90°)' },
-  { key: 'G', desc: '選択中の荷物を落下' },
-  { key: 'Ctrl+Z / Ctrl+Y', desc: '元に戻す / やり直し' },
-  { key: 'Delete', desc: '選択中の荷物を削除' },
-  { key: 'Escape', desc: '選択解除' },
-]
-
 export function HelpOverlay() {
+  const { t } = useTranslation()
+
+  const items = [
+    { key: t.help.leftDrag, desc: t.help.cameraRotate },
+    { key: t.help.rightDrag, desc: t.help.cameraPan },
+    { key: t.help.wheel, desc: t.help.zoom },
+    { key: t.help.click, desc: t.help.selectCargo },
+    { key: t.help.leftDragSelected, desc: t.help.moveCargo },
+    { key: t.help.shiftLeftDrag, desc: t.help.freeRotate },
+    { key: t.help.dndSidebar, desc: t.help.placeCargo },
+    { key: t.help.rKey, desc: t.help.yAxisRotation },
+    { key: t.help.tKey, desc: t.help.xAxisRotation },
+    { key: t.help.fKey, desc: t.help.zAxisRotation },
+    { key: t.help.gKey, desc: t.help.dropCargo },
+    { key: t.help.ctrlZ, desc: t.help.undoRedo },
+    { key: t.help.deleteKey, desc: t.help.deleteCargo },
+    { key: t.help.escKey, desc: t.help.deselect },
+  ]
+
   return (
     <div className={styles.overlay}>
       <ul className={styles.list}>
-        {HELP_ITEMS.map((item) => (
+        {items.map((item) => (
           <li key={item.key} className={styles.item}>
             <span className={styles.key}>{item.key}</span>: {item.desc}
           </li>

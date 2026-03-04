@@ -5,9 +5,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
   switch (action.type) {
     case 'PLACE_BLOCK': {
       const { x, y, z, w, h, d, color } = action
-      // Boundary check
-      if (x < 0 || y < 0 || z < 0 ||
-          x + w > state.maxCells || y + h > state.maxCells || z + d > state.maxCells) {
+      // Boundary check (only enforce non-negative coordinates)
+      if (x < 0 || y < 0 || z < 0) {
         return state
       }
       const newBlock = { x, y, z, w, h, d, color }

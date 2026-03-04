@@ -1,4 +1,5 @@
 import type { EditorState, EditorAction } from '../state/types'
+import { useTranslation } from '../../i18n'
 import styles from './ShapeInfoPanel.module.css'
 
 interface Props {
@@ -34,6 +35,7 @@ function clampBrush(v: number): number {
 }
 
 export function ShapeInfoPanel({ state, dispatch }: Props) {
+  const { t } = useTranslation()
   const bbox = computeBoundingBox(state)
 
   const setBrush = (axis: 'w' | 'h' | 'd', value: string) => {
@@ -50,10 +52,10 @@ export function ShapeInfoPanel({ state, dispatch }: Props) {
 
   return (
     <div className={styles.container}>
-      <div className={styles.title}>Shape Editor</div>
+      <div className={styles.title}>{t.editor.shapeName}</div>
 
       <label className={styles.field}>
-        <span className={styles.label}>Name</span>
+        <span className={styles.label}>{t.cargoEditor.name}</span>
         <input
           type="text"
           value={state.shapeName}
@@ -63,7 +65,7 @@ export function ShapeInfoPanel({ state, dispatch }: Props) {
       </label>
 
       <label className={styles.field}>
-        <span className={styles.label}>Weight (kg)</span>
+        <span className={styles.label}>{t.editor.weightKg}</span>
         <input
           type="number"
           value={state.weightKg}
@@ -80,7 +82,7 @@ export function ShapeInfoPanel({ state, dispatch }: Props) {
       </label>
 
       <div className={styles.field}>
-        <span className={styles.label}>Brush Size (cm)</span>
+        <span className={styles.label}>{t.editor.brushSize}</span>
         <div className={styles.brushInputs}>
           <label className={styles.brushField}>
             W
@@ -122,11 +124,11 @@ export function ShapeInfoPanel({ state, dispatch }: Props) {
 
       <div className={styles.info}>
         <div className={styles.infoRow}>
-          <span className={styles.infoLabel}>Blocks</span>
+          <span className={styles.infoLabel}>{t.editor.blocks}</span>
           <span className={styles.infoValue}>{state.blocks.size}</span>
         </div>
         <div className={styles.infoRow}>
-          <span className={styles.infoLabel}>BBox (cm)</span>
+          <span className={styles.infoLabel}>{t.editor.bbox}</span>
           <span className={styles.infoValue}>
             {bbox.w} x {bbox.h} x {bbox.d}
           </span>

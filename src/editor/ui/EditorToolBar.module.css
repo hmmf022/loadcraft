@@ -6,7 +6,7 @@
   display: flex;
   gap: 4px;
   padding: 4px;
-  background: rgba(30, 30, 30, 0.85);
+  background: var(--toolbar-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   backdrop-filter: blur(8px);

@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { useAppStore } from '../state/store'
 import { validateSaveData } from '../core/SaveLoad'
+import { useTranslation } from '../i18n'
 import styles from './ToolBar.module.css'
 
 const SNAP_SIZES = [1, 5, 10]
@@ -27,6 +28,7 @@ export function ToolBar() {
   const addToast = useAppStore((s) => s.addToast)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const { t, language, setLanguage } = useTranslation()
 
   const handleLoad = () => {
     fileInputRef.current?.click()
@@ -42,12 +44,12 @@ export function ToolBar() {
         const data = JSON.parse(reader.result as string)
         if (validateSaveData(data)) {
           loadState(data)
-          addToast('読み込みました', 'success')
+          addToast(t.toasts.loaded, 'success')
         } else {
-          addToast('無効なセーブファイルです', 'error')
+          addToast(t.toasts.invalidSaveFile, 'error')
         }
       } catch {
-        addToast('ファイルの読み込みに失敗しました', 'error')
+        addToast(t.toasts.loadError, 'error')
       }
     }
     reader.readAsText(file)
@@ -65,11 +67,11 @@ export function ToolBar() {
         Redo
       </button>
       <div className={styles.separator} />
-      <button className={styles.button} onClick={() => { saveState(); addToast('保存しました', 'success') }}>
-        Save
+      <button className={styles.button} onClick={() => { saveState(); addToast(t.toasts.saved, 'success') }}>
+        {t.toolbar.save}
       </button>
       <button className={styles.button} onClick={handleLoad}>
-        Load
+        {t.toolbar.load}
       </button>
       <input
         ref={fileInputRef}
@@ -101,7 +103,7 @@ export function ToolBar() {
         className={`${styles.button} ${forceMode ? styles.forceActive : ''}`}
         onClick={toggleForceMode}
       >
-        Force
+        {t.toolbar.force}
       </button>
       {snapToGrid && (
         <select
@@ -115,10 +117,10 @@ export function ToolBar() {
         </select>
       )}
       <button className={styles.button} onClick={autoPackCargo}>
-        Auto Pack
+        {t.toolbar.autoPack}
       </button>
       <button className={styles.button} onClick={checkInterference}>
-        Check
+        {t.toolbar.check}
       </button>
       <div className={styles.separator} />
       <a
@@ -127,8 +129,14 @@ export function ToolBar() {
         rel="noopener noreferrer"
         className={styles.button}
       >
-        Editor
+        {t.toolbar.editor}
       </a>
+      <button
+        className={styles.button}
+        onClick={() => setLanguage(language === 'ja' ? 'en' : 'ja')}
+      >
+        {t.common.langLabel}
+      </button>
     </div>
   )
 }

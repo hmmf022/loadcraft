@@ -8,6 +8,7 @@ import { EditorToolBar } from './ui/EditorToolBar'
 import { ColorPalette } from './ui/ColorPalette'
 import { ShapeInfoPanel } from './ui/ShapeInfoPanel'
 import { ExportDialog } from './ui/ExportDialog'
+import { useTranslation } from '../i18n'
 import styles from './EditorApp.module.css'
 
 export function EditorApp() {
@@ -77,6 +78,8 @@ export function EditorApp() {
     rawDispatch(action)
   }, [state, syncHistory])
 
+  const { t: tr } = useTranslation()
+
   return (
     <div className={styles.layout}>
       <div className={styles.sidebar}>
@@ -87,7 +90,7 @@ export function EditorApp() {
         <ExportDialog state={state} dispatch={dispatch} />
         <div className={styles.sidebarFooter}>
           <a href="/index.html" target="_blank" rel="noopener noreferrer" className={styles.navLink}>
-            コンテナシミュレータを開く &rarr;
+            {tr.editor.openSimulator} &rarr;
           </a>
         </div>
       </div>
