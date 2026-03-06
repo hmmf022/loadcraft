@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "loadcraft": {
+      "command": "node",
+      "args": ["/home/hmmf022/work/loadcraft/dist-mcp/main.js"]
+    }
+  }
+}
