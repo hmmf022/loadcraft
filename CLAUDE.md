@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+複雑な形状のオブジェクトに対応した積込シミュレータ
+
 Container loading simulator with WebGPU 3D visualization. Users define cargo items in a sidebar, place them into shipping containers, and view the result in a real-time 3D scene. All units are in centimeters.
 
 Includes a **Voxel Shape Editor** (`editor.html`) — a Minecraft creative mode-style block editor for building composite (non-rectangular) cargo shapes. Shapes are exported as `.shape.json` files and imported into the simulator as multi-block cargo items.
@@ -130,6 +132,66 @@ interface ShapeBlock {  // src/core/types.ts
 - **ゴースト**: D&D中に複合形状全体のゴーストプレビュー表示
 - **SaveLoad**: `blocks` フィールドをoptionalとしてバリデーション・保存・復元
 - **インポート**: `parseCargoJSON()` でShapeDataを自動検出し `shapeToCargoItemDef()` で変換
+
+## MCP Server (`src/mcp/`)
+
+LLM (Claude等) が LoadCraft のコア配置ロジックをツールとして直接操作するための MCP (Model Context Protocol) Server。
+
+### Commands
+
+- `npm run build:mcp` — tsup で `dist-mcp/main.js` にバンドルビルド
+- `npm run mcp` — ビルド済みサーバーを実行
+- `npm run mcp:dev` — tsx で開発時直接実行
+
+### Architecture
+
+```
+LLM ↔ stdio (JSON-RPC) ↔ MCP Server (Node.js)
+  ├─ SimulatorSession (VoxelGrid + placements + history)
+  └─ src/core/* を直接 import して再利用
+```
+
+- **ステートフル**: プロセス内に VoxelGrid + 配置状態 + 履歴を保持
+- **session.ts**: `src/state/store.ts` の配置ビジネスロジックを React/Zustand 非依存で抽出
+- **ビルド**: `tsup` (ESM, Node.js target), `tsconfig.mcp.json` (DOM/WebGPU型を除外)
+
+### Tools (20)
+
+| Category | Tool | Description |
+|----------|------|-------------|
+| Container | `list_container_presets` | プリセット一覧 |
+| Container | `set_container` | コンテナサイズ設定 |
+| Cargo | `add_cargo_def` | 貨物定義追加 |
+| Cargo | `list_cargo_defs` | 貨物定義一覧 |
+| Cargo | `remove_cargo_def` | 貨物定義削除 |
+| Cargo | `import_cargo` | CSV/JSONインポート |
+| Placement | `place_cargo` | 配置 |
+| Placement | `remove_cargo` | 配置削除 |
+| Placement | `move_cargo` | 移動 |
+| Placement | `rotate_cargo` | 回転 |
+| Placement | `drop_cargo` | 重力落下 |
+| Placement | `auto_pack` | 自動配置 |
+| Placement | `find_position` | 配置位置探索 |
+| Analysis | `get_status` | 状態・充填率・重量・重心 |
+| Analysis | `check_interference` | AABB干渉チェック |
+| Analysis | `check_support` | 支持力チェック |
+| History | `undo` / `redo` | 操作履歴 |
+| Save | `save_state` / `load_state` | 状態保存・復元 |
+
+### File Structure
+
+```
+src/mcp/
+├── main.ts            # エントリポイント (McpServer + stdio transport)
+├── session.ts         # SimulatorSession (VoxelGrid + placements + history)
+└── tools/
+    ├── container.ts   # set_container, list_container_presets
+    ├── cargo.ts       # add_cargo_def, list_cargo_defs, remove_cargo_def, import_cargo
+    ├── placement.ts   # place_cargo, remove_cargo, move_cargo, rotate_cargo, drop_cargo, auto_pack, find_position
+    ├── analysis.ts    # get_status, check_interference, check_support
+    ├── history.ts     # undo, redo
+    └── save.ts        # save_state, load_state
+```
 
 ## Design Documents
 
