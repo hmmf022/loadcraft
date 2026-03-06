@@ -40,4 +40,19 @@ export function registerAnalysisTools(server: McpServer, session: SimulatorSessi
       }
     },
   )
+
+  server.tool(
+    'check_stack_constraints',
+    'Check stack weight constraints for all placements. Returns violations where weight on top exceeds maxStackWeightKg or noStack is set.',
+    {},
+    async () => {
+      const result = session.checkStackConstraintsAll()
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          violationCount: result.violations.length,
+          violations: result.violations,
+        }, null, 2) }],
+      }
+    },
+  )
 }

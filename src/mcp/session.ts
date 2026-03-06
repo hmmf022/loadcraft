@@ -5,6 +5,8 @@ import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand
 import { autoPack } from '../core/AutoPacker.js'
 import { checkInterference } from '../core/InterferenceChecker.js'
 import type { InterferencePair } from '../core/InterferenceChecker.js'
+import { checkStackConstraints } from '../core/StackChecker.js'
+import type { StackViolation } from '../core/StackChecker.js'
 import { voxelize, voxelizeComposite } from '../core/Voxelizer.js'
 import type { VoxelizeResult } from '../core/Voxelizer.js'
 import { computeWeight, computeCogDeviation } from '../core/WeightCalculator.js'
@@ -63,6 +65,35 @@ export class SimulatorSession {
     this.placements = this.placements.filter((p) => p.cargoDefId !== id)
     this.cargoDefs = this.cargoDefs.filter((d) => d.id !== id)
     return { removedPlacements: toRemove.length }
+  }
+
+  updateCargoDef(
+    id: string,
+    updates: Partial<Pick<CargoItemDef, 'name' | 'widthCm' | 'heightCm' | 'depthCm' | 'weightKg' | 'color' | 'noFlip' | 'noStack' | 'maxStackWeightKg'>>,
+  ): { success: boolean; error?: string } {
+    const idx = this.cargoDefs.findIndex((d) => d.id === id)
+    if (idx < 0) return { success: false, error: 'Cargo definition not found' }
+
+    const def = this.cargoDefs[idx]!
+    const hasDimensionChange = updates.widthCm !== undefined || updates.heightCm !== undefined || updates.depthCm !== undefined
+    if (hasDimensionChange) {
+      const inUse = this.placements.some((p) => p.cargoDefId === id)
+      if (inUse) {
+        return { success: false, error: 'Cannot change dimensions while cargo is placed. Remove placements first, or update only name/weight/color/constraints.' }
+      }
+    }
+
+    if (updates.name !== undefined) def.name = updates.name
+    if (updates.widthCm !== undefined) def.widthCm = updates.widthCm
+    if (updates.heightCm !== undefined) def.heightCm = updates.heightCm
+    if (updates.depthCm !== undefined) def.depthCm = updates.depthCm
+    if (updates.weightKg !== undefined) def.weightKg = updates.weightKg
+    if (updates.color !== undefined) def.color = updates.color
+    if (updates.noFlip !== undefined) def.noFlip = updates.noFlip
+    if (updates.noStack !== undefined) def.noStack = updates.noStack
+    if (updates.maxStackWeightKg !== undefined) def.maxStackWeightKg = updates.maxStackWeightKg
+
+    return { success: true }
   }
 
   importCargo(content: string, format: 'csv' | 'json'): { defs: CargoItemDef[]; errors: string[] } {
@@ -318,6 +349,11 @@ export class SimulatorSession {
 
   checkInterferenceAll(): { pairs: InterferencePair[] } {
     return checkInterference(this.placements, this.cargoDefs)
+  }
+
+  checkStackConstraintsAll(): { violations: StackViolation[] } {
+    const violations = checkStackConstraints(this.placements, this.cargoDefs)
+    return { violations }
   }
 
   checkSupportAll(): { results: Record<number, SupportResult> } {
