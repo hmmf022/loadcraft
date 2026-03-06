@@ -3,6 +3,10 @@
     "loadcraft": {
       "command": "node",
       "args": ["/home/hmmf022/work/loadcraft/dist-mcp/main.js"]
+    },
+    "loadcraft-editor": {
+      "command": "node",
+      "args": ["/home/hmmf022/work/loadcraft/dist-mcp-editor/main.js"]
     }
   }
 }

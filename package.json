@@ -12,7 +12,10 @@
     "test:watch": "vitest",
     "build:mcp": "tsup --config tsup.config.mcp.ts",
     "mcp": "node dist-mcp/main.js",
-    "mcp:dev": "tsx src/mcp/main.ts"
+    "mcp:dev": "tsx src/mcp/main.ts",
+    "build:mcp-editor": "tsup --config tsup.config.mcp-editor.ts",
+    "mcp-editor": "node dist-mcp-editor/main.js",
+    "mcp-editor:dev": "tsx src/mcp-editor/main.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
