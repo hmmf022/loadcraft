@@ -34,6 +34,9 @@ export interface CargoItemDef {
   weightKg: number
   color: string
   blocks?: ShapeBlock[] // undefined = conventional box (backward compatible)
+  maxStackWeightKg?: number  // max weight allowed on top (kg). undefined=unlimited
+  noStack?: boolean          // no stacking allowed (sugar for maxStackWeightKg=0)
+  noFlip?: boolean           // keep Y-axis upright: only Y-axis rotations allowed
 }
 
 export interface PlacedCargo {

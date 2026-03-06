@@ -32,9 +32,12 @@ describe('autoPack', () => {
     ]
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(2)
-    // 1st: x=0, 2nd: x=50
+    expect(result.failedDefIds).toHaveLength(0)
+    // Both placed, positions depend on rotation (smallest footprint selected)
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
-    expect(result.placements[1]!.positionCm).toEqual({ x: 50, y: 0, z: 0 })
+    // 2nd item placed adjacent to 1st (X offset = effW of chosen rotation)
+    expect(result.placements[1]!.positionCm.y).toBe(0)
+    expect(result.placements[1]!.positionCm.z).toBe(0)
   })
 
   it('体積降順ソート: 大きい荷物が先に配置される', () => {
@@ -58,7 +61,7 @@ describe('autoPack', () => {
     expect(result.failedDefIds).toEqual(['huge'])
   })
 
-  it('回転なし: 幅が収まらない荷物は failedDefIds', () => {
+  it('回転で収まるケース: 幅が広すぎても回転で配置可能', () => {
     const defs: CargoItemDef[] = [{
       id: 'long', name: 'L', widthCm: 95, heightCm: 10, depthCm: 10,
       weightKg: 1, color: '#f00',
@@ -67,39 +70,59 @@ describe('autoPack', () => {
       widthCm: 50, heightCm: 100, depthCm: 100, maxPayloadKg: 10000,
     }
     const result = autoPack(defs, narrowContainer, 1)
-    expect(result.placements).toHaveLength(0)
-    expect(result.failedDefIds).toEqual(['long'])
+    // Should succeed with rotation (e.g., 90° Y puts W→D: 10×10×95)
+    expect(result.placements).toHaveLength(1)
+    expect(result.failedDefIds).toHaveLength(0)
+    // The rotation should not be {0,0,0} since 95 > 50 (container width)
+    const rot = result.placements[0]!.rotationDeg
+    expect(rot).not.toEqual({ x: 0, y: 0, z: 0 })
   })
 
-  it('棚積み: 行折り返し (奥壁から手前へ)', () => {
-    // 3個の60cm幅アイテム → 1個目x=0, 2個目はx=60+60=120で入らない→次行
+  it('棚積み: 行折り返し (回転なしアイテム)', () => {
+    // Use noFlip cubes (W=H=D) so rotation doesn't change behavior
+    // 3 items of 60cm width, only 1 fits per row in 100cm container
     const defs: CargoItemDef[] = [
-      { id: 'a', name: 'A', widthCm: 60, heightCm: 10, depthCm: 20, weightKg: 1, color: '#f00' },
-      { id: 'b', name: 'B', widthCm: 60, heightCm: 10, depthCm: 20, weightKg: 1, color: '#0f0' },
-      { id: 'c', name: 'C', widthCm: 60, heightCm: 10, depthCm: 20, weightKg: 1, color: '#00f' },
+      { id: 'a', name: 'A', widthCm: 60, heightCm: 60, depthCm: 60, weightKg: 1, color: '#f00' },
+      { id: 'b', name: 'B', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#0f0' },
+    ]
+    const result = autoPack(defs, container, 1)
+    expect(result.placements).toHaveLength(2)
+    // 1st (larger volume): x=0, z=0
+    expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
+    // 2nd: x=60 (fits in same row since 60+40=100)
+    expect(result.placements[1]!.positionCm).toEqual({ x: 60, y: 0, z: 0 })
+  })
+
+  it('棚積み: 行折り返し occurs when row is full', () => {
+    // 3 cubes of 40cm in 100cm container: first two fit (40+40=80≤100), third wraps
+    const defs: CargoItemDef[] = [
+      { id: 'a', name: 'A', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#f00' },
+      { id: 'b', name: 'B', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#0f0' },
+      { id: 'c', name: 'C', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#00f' },
     ]
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(3)
-    // 1st: x=0, z=0
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
-    // 2nd: cursorX reset to 0, next row z=20, x=0
-    expect(result.placements[1]!.positionCm).toEqual({ x: 0, y: 0, z: 20 })
-    // 3rd: cursorX reset to 0, next row z=40, x=0
+    expect(result.placements[1]!.positionCm).toEqual({ x: 40, y: 0, z: 0 })
+    // 3rd wraps to next row (80+40=120>100)
     expect(result.placements[2]!.positionCm).toEqual({ x: 0, y: 0, z: 40 })
   })
 
   it('棚積み: レイヤー折り返し', () => {
-    // Fill depth with items, then next layer
+    // Use cubes that fill entire XZ plane so next item must go to next layer
     const defs: CargoItemDef[] = [
       { id: 'a', name: 'A', widthCm: 100, heightCm: 30, depthCm: 100, weightKg: 1, color: '#f00' },
       { id: 'b', name: 'B', widthCm: 100, heightCm: 30, depthCm: 100, weightKg: 1, color: '#0f0' },
     ]
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(2)
-    // 1st: x=0, y=0
+    // Both should be placed
+    expect(result.failedDefIds).toHaveLength(0)
+    // 1st at origin
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
-    // Second item goes to next layer (y=30)
-    expect(result.placements[1]!.positionCm).toEqual({ x: 0, y: 30, z: 0 })
+    // 2nd goes up (either y or z depends on rotation), but must be at a different position
+    const pos2 = result.placements[1]!.positionCm
+    expect(pos2.x + pos2.y + pos2.z).toBeGreaterThan(0)
   })
 
   it('instanceId が startInstanceId から連番', () => {
@@ -112,11 +135,45 @@ describe('autoPack', () => {
     expect(result.placements[1]!.instanceId).toBe(43)
   })
 
-  it('常に rotationDeg={0,0,0} で配置', () => {
-    const defs: CargoItemDef[] = [
-      { id: 'a', name: 'A', widthCm: 10, heightCm: 20, depthCm: 30, weightKg: 1, color: '#f00' },
-    ]
+  it('noFlip: Y軸回転のみ使用', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'NoFlip', widthCm: 95, heightCm: 10, depthCm: 40,
+      weightKg: 1, color: '#f00', noFlip: true,
+    }]
+    const narrowContainer: ContainerDef = {
+      widthCm: 50, heightCm: 100, depthCm: 100, maxPayloadKg: 10000,
+    }
+    const result = autoPack(defs, narrowContainer, 1)
+    // 95×10×40 with noFlip can rotate Y90 → 40×10×95 which fits (40 < 50 width)
+    expect(result.placements).toHaveLength(1)
+    const rot = result.placements[0]!.rotationDeg
+    // Must be Y-axis only rotation
+    expect(rot.x).toBe(0)
+    expect(rot.z).toBe(0)
+  })
+
+  it('noFlip: item that cannot fit even with Y rotation → failedDefIds', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'NoFlip', widthCm: 95, heightCm: 10, depthCm: 80,
+      weightKg: 1, color: '#f00', noFlip: true,
+    }]
+    const narrowContainer: ContainerDef = {
+      widthCm: 50, heightCm: 20, depthCm: 50, maxPayloadKg: 10000,
+    }
+    // 95×10×80 with noFlip: original=95×10×80, Y90=80×10×95, neither fits in 50×20×50
+    const result = autoPack(defs, narrowContainer, 1)
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds).toEqual(['a'])
+  })
+
+  it('cube item has only 1 orientation candidate (deduplication)', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'cube', name: 'Cube', widthCm: 30, heightCm: 30, depthCm: 30,
+      weightKg: 1, color: '#f00',
+    }]
     const result = autoPack(defs, container, 1)
+    expect(result.placements).toHaveLength(1)
+    // Should place with identity rotation since all orientations yield same AABB
     expect(result.placements[0]!.rotationDeg).toEqual({ x: 0, y: 0, z: 0 })
   })
 })

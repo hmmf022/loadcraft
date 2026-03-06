@@ -1,6 +1,6 @@
-import type { CargoItemDef, ContainerDef, PlacedCargo } from './types'
+import type { CargoItemDef, ContainerDef, PlacedCargo, Vec3 } from './types'
 import type { VoxelizeResult } from './Voxelizer'
-import { voxelize, voxelizeComposite } from './Voxelizer'
+import { voxelize, voxelizeComposite, computeRotatedAABB } from './Voxelizer'
 
 export interface PackResult {
   placements: PlacedCargo[]
@@ -8,9 +8,53 @@ export interface PackResult {
   failedDefIds: string[]
 }
 
+/** 6 axis-aligned orientations covering all W×H×D permutations */
+export const ORIENTATIONS: Vec3[] = [
+  { x: 0, y: 0, z: 0 },      // W×H×D (original)
+  { x: 0, y: 90, z: 0 },     // D×H×W
+  { x: 90, y: 0, z: 0 },     // W×D×H
+  { x: 90, y: 90, z: 0 },    // H×D×W
+  { x: 0, y: 0, z: 90 },     // H×W×D
+  { x: 90, y: 0, z: 90 },    // D×W×H
+]
+
+/** Y-axis-only orientations for noFlip items */
+const NOFLIP_ORIENTATIONS: Vec3[] = [
+  { x: 0, y: 0, z: 0 },
+  { x: 0, y: 90, z: 0 },
+]
+
+interface OrientationCandidate {
+  rot: Vec3
+  effW: number
+  effH: number
+  effD: number
+}
+
+/** Get unique orientation candidates for a cargo def, deduplicating identical AABB sizes */
+function getOrientationCandidates(def: CargoItemDef): OrientationCandidate[] {
+  const orientations = def.noFlip ? NOFLIP_ORIENTATIONS : ORIENTATIONS
+  const seen = new Set<string>()
+  const candidates: OrientationCandidate[] = []
+
+  for (const rot of orientations) {
+    const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, { x: 0, y: 0, z: 0 }, rot)
+    const effW = aabb.max.x - aabb.min.x
+    const effH = aabb.max.y - aabb.min.y
+    const effD = aabb.max.z - aabb.min.z
+    const key = `${effW},${effH},${effD}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    candidates.push({ rot, effW, effH, effD })
+  }
+
+  return candidates
+}
+
 /**
- * AABB shelf-packing algorithm. No VoxelGrid, no rotation.
- * O(n) — cursor advances through rows/layers.
+ * AABB shelf-packing algorithm with rotation support.
+ * Cursor advances through rows/layers. At each position, tries all
+ * orientation candidates and picks the one with smallest footprint that fits.
  */
 export function autoPack(
   cargoDefs: CargoItemDef[],
@@ -37,57 +81,69 @@ export function autoPack(
   let layerMaxH = 0
 
   for (const def of sorted) {
-    const w = def.widthCm
-    const h = def.heightCm
-    const d = def.depthCm
+    const candidates = getOrientationCandidates(def)
+    let placed = false
 
-    // Advance to next row if item doesn't fit in current row
-    if (cursorX + w > container.widthCm) {
-      cursorX = 0
-      cursorZ += rowMaxD
-      rowMaxD = 0
+    // Try at current cursor position, then advance if needed
+    for (let attempt = 0; attempt < 3 && !placed; attempt++) {
+      // Find best fitting orientation at current cursor
+      let bestCandidate: OrientationCandidate | null = null
+      let bestFootprint = Infinity
+
+      for (const c of candidates) {
+        if (cursorX + c.effW <= container.widthCm &&
+            cursorZ + c.effD <= container.depthCm &&
+            cursorY + c.effH <= container.heightCm) {
+          const footprint = c.effW * c.effD
+          if (footprint < bestFootprint) {
+            bestFootprint = footprint
+            bestCandidate = c
+          }
+        }
+      }
+
+      if (bestCandidate) {
+        const pos = { x: cursorX, y: cursorY, z: cursorZ }
+        const rot = bestCandidate.rot
+
+        const result = def.blocks
+          ? voxelizeComposite(def.blocks, pos, rot)
+          : voxelize(bestCandidate.effW, bestCandidate.effH, bestCandidate.effD, pos, { x: 0, y: 0, z: 0 })
+
+        placements.push({
+          instanceId: nextId,
+          cargoDefId: def.id,
+          positionCm: pos,
+          rotationDeg: rot,
+        })
+        voxelizeResults.push(result)
+        nextId++
+
+        cursorX += bestCandidate.effW
+        rowMaxD = Math.max(rowMaxD, bestCandidate.effD)
+        layerMaxH = Math.max(layerMaxH, bestCandidate.effH)
+        placed = true
+      } else {
+        // Advance cursor
+        if (attempt === 0) {
+          // Advance to next row
+          cursorX = 0
+          cursorZ += rowMaxD
+          rowMaxD = 0
+        } else if (attempt === 1) {
+          // Advance to next layer
+          cursorZ = 0
+          cursorX = 0
+          cursorY += layerMaxH
+          layerMaxH = 0
+          rowMaxD = 0
+        }
+      }
     }
 
-    // Advance to next layer if item doesn't fit in current row of rows
-    if (cursorZ + d > container.depthCm) {
-      cursorZ = 0
-      cursorX = 0
-      cursorY += layerMaxH
-      layerMaxH = 0
-    }
-
-    // Item doesn't fit vertically — skip
-    if (cursorY + h > container.heightCm) {
+    if (!placed) {
       failedDefIds.push(def.id)
-      continue
     }
-
-    // Also check width/depth fit after cursor reset
-    if (cursorX + w > container.widthCm || cursorZ + d > container.depthCm) {
-      failedDefIds.push(def.id)
-      continue
-    }
-
-    // 画面奥(X=0)から手前に向かって配置
-    const pos = { x: cursorX, y: cursorY, z: cursorZ }
-    const rot = { x: 0, y: 0, z: 0 }
-
-    const result = def.blocks
-      ? voxelizeComposite(def.blocks, pos, rot)
-      : voxelize(w, h, d, pos, rot)
-
-    placements.push({
-      instanceId: nextId,
-      cargoDefId: def.id,
-      positionCm: pos,
-      rotationDeg: rot,
-    })
-    voxelizeResults.push(result)
-    nextId++
-
-    cursorX += w
-    rowMaxD = Math.max(rowMaxD, d)
-    layerMaxH = Math.max(layerMaxH, h)
   }
 
   return { placements, voxelizeResults, failedDefIds }

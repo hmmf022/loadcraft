@@ -11,6 +11,8 @@ import { computeWeight, computeCogDeviation } from '../core/WeightCalculator'
 import type { CogDeviation } from '../core/WeightCalculator'
 import { checkAllSupports } from '../core/GravityChecker'
 import type { SupportResult } from '../core/GravityChecker'
+import { checkStackConstraints } from '../core/StackChecker'
+import type { StackViolation } from '../core/StackChecker'
 import { serializeSaveData, downloadJson } from '../core/SaveLoad'
 import { getTranslation, interpolate } from '../i18n'
 import type { SaveData } from '../core/SaveLoad'
@@ -94,6 +96,9 @@ export interface AppState {
   cogDeviation: CogDeviation | null
   supportResults: Map<number, SupportResult>
 
+  // Stack violations
+  stackViolations: StackViolation[]
+
   // Interference
   interferenceResults: InterferencePair[]
   checkInterference: () => void
@@ -113,14 +118,15 @@ function recomputeAnalyticsSync(
   placements: PlacedCargo[],
   cargoDefs: CargoItemDef[],
   container: ContainerDef,
-): { weightResult: WeightResult; cogDeviation: CogDeviation | null; supportResults: Map<number, SupportResult> } {
+): { weightResult: WeightResult; cogDeviation: CogDeviation | null; supportResults: Map<number, SupportResult>; stackViolations: StackViolation[] } {
   const weightResult = computeWeight(placements, cargoDefs, container)
   const cogDeviation = placements.length > 0
     ? computeCogDeviation(weightResult.centerOfGravity, container)
     : null
   const grid = getVoxelGrid()
   const supportResults = checkAllSupports(grid, placements, cargoDefs)
-  return { weightResult, cogDeviation, supportResults }
+  const stackViolations = checkStackConstraints(placements, cargoDefs)
+  return { weightResult, cogDeviation, supportResults, stackViolations }
 }
 
 let analyticsTimer: ReturnType<typeof setTimeout> | null = null
@@ -159,6 +165,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       weightResult: initialWeightResult,
       cogDeviation: null,
       supportResults: new Map(),
+      stackViolations: [],
     }))
   },
 
@@ -323,6 +330,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
     if (!def) return
+
+    // noFlip check: reject X/Z axis rotation for noFlip items
+    if (def.noFlip) {
+      const oldRot = placement.rotationDeg
+      const xChanged = ((newRotation.x % 360) + 360) % 360 !== ((oldRot.x % 360) + 360) % 360
+      const zChanged = ((newRotation.z % 360) + 360) % 360 !== ((oldRot.z % 360) + 360) % 360
+      if (xChanged || zChanged) {
+        get().addToast(getTranslation().toasts.noFlipViolation, 'error')
+        return
+      }
+    }
 
     const grid = getVoxelGrid()
     const pos = placement.positionCm
@@ -525,9 +543,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   toasts: [],
   addToast: (message, type) => {
     const id = Date.now()
-    set((state) => ({
-      toasts: [...state.toasts, { id, message, type }],
-    }))
+    set((state) => {
+      const next = [...state.toasts, { id, message, type }]
+      return { toasts: next.length > 10 ? next.slice(-10) : next }
+    })
     setTimeout(() => {
       set((state) => ({
         toasts: state.toasts.filter((t) => t.id !== id),
@@ -545,6 +564,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   weightResult: initialWeightResult,
   cogDeviation: null,
   supportResults: new Map(),
+  stackViolations: [],
 
   // Interference
   interferenceResults: [],

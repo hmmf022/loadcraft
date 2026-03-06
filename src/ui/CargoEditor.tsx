@@ -12,6 +12,9 @@ interface FormState {
   depthCm: string
   weightKg: string
   color: string
+  noStack: boolean
+  noFlip: boolean
+  maxStackWeightKg: string
 }
 
 const defaultForm: FormState = {
@@ -21,6 +24,9 @@ const defaultForm: FormState = {
   depthCm: '',
   weightKg: '',
   color: '#4a90d9',
+  noStack: false,
+  noFlip: false,
+  maxStackWeightKg: '',
 }
 
 export function CargoEditor() {
@@ -35,6 +41,10 @@ export function CargoEditor() {
 
   const handleChange = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }))
+  }
+
+  const handleCheckbox = (field: 'noStack' | 'noFlip') => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm((prev) => ({ ...prev, [field]: e.target.checked }))
   }
 
   const validate = (): boolean => {
@@ -65,7 +75,7 @@ export function CargoEditor() {
     e.preventDefault()
     if (!validate()) return
 
-    addCargoDef({
+    const def: Parameters<typeof addCargoDef>[0] = {
       id: crypto.randomUUID(),
       name: form.name.trim(),
       widthCm: parseFloat(form.widthCm),
@@ -73,7 +83,12 @@ export function CargoEditor() {
       depthCm: parseFloat(form.depthCm),
       weightKg: parseFloat(form.weightKg),
       color: form.color,
-    })
+    }
+    if (form.noStack) def.noStack = true
+    if (form.noFlip) def.noFlip = true
+    const maxStack = parseFloat(form.maxStackWeightKg)
+    if (!isNaN(maxStack) && maxStack >= 0) def.maxStackWeightKg = maxStack
+    addCargoDef(def)
     setForm(defaultForm)
     setErrors({})
   }
@@ -189,6 +204,40 @@ export function CargoEditor() {
             value={form.color}
             onChange={handleChange('color')}
             className={styles.colorInput}
+          />
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={form.noStack}
+            onChange={handleCheckbox('noStack')}
+          />
+          {t.cargoEditor.noStack}
+        </label>
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={form.noFlip}
+            onChange={handleCheckbox('noFlip')}
+          />
+          {t.cargoEditor.noFlip}
+        </label>
+      </div>
+
+      <div className={styles.row}>
+        <div className={styles.field}>
+          <label className={styles.label}>{t.cargoEditor.maxStackWeight}</label>
+          <input
+            type="number"
+            value={form.maxStackWeightKg}
+            onChange={handleChange('maxStackWeightKg')}
+            className={styles.input}
+            min="0"
+            step="1"
+            placeholder="∞"
           />
         </div>
       </div>

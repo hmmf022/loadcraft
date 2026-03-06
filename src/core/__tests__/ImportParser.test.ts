@@ -69,6 +69,32 @@ B,20,20,20,20`
     const result = parseCargoCSV(csv)
     expect(result.defs[0]!.id).not.toBe(result.defs[1]!.id)
   })
+
+  it('parses constraint columns (maxStackWeightKg, noStack, noFlip)', () => {
+    const csv = `name,widthCm,heightCm,depthCm,weightKg,maxStackWeightKg,noStack,noFlip
+Fragile,50,40,30,100,50,true,false
+Glass,60,50,40,200,,false,true`
+
+    const result = parseCargoCSV(csv)
+    expect(result.defs).toHaveLength(2)
+    expect(result.defs[0]!.maxStackWeightKg).toBe(50)
+    expect(result.defs[0]!.noStack).toBe(true)
+    expect(result.defs[0]!.noFlip).toBeUndefined()
+    expect(result.defs[1]!.maxStackWeightKg).toBeUndefined()
+    expect(result.defs[1]!.noStack).toBeUndefined()
+    expect(result.defs[1]!.noFlip).toBe(true)
+  })
+
+  it('backward compatible: no constraint columns', () => {
+    const csv = `name,widthCm,heightCm,depthCm,weightKg
+Box,50,40,30,100`
+
+    const result = parseCargoCSV(csv)
+    expect(result.defs).toHaveLength(1)
+    expect(result.defs[0]!.maxStackWeightKg).toBeUndefined()
+    expect(result.defs[0]!.noStack).toBeUndefined()
+    expect(result.defs[0]!.noFlip).toBeUndefined()
+  })
 })
 
 describe('parseCargoJSON', () => {
@@ -111,6 +137,30 @@ describe('parseCargoJSON', () => {
     const result = parseCargoJSON(json)
     expect(result.defs).toHaveLength(0)
     expect(result.errors.some((e) => e.includes('widthCm'))).toBe(true)
+  })
+
+  it('parses constraint fields (maxStackWeightKg, noStack, noFlip)', () => {
+    const json = JSON.stringify([
+      { name: 'Fragile', widthCm: 50, heightCm: 40, depthCm: 30, weightKg: 100, maxStackWeightKg: 50, noStack: true, noFlip: true },
+    ])
+
+    const result = parseCargoJSON(json)
+    expect(result.defs).toHaveLength(1)
+    expect(result.defs[0]!.maxStackWeightKg).toBe(50)
+    expect(result.defs[0]!.noStack).toBe(true)
+    expect(result.defs[0]!.noFlip).toBe(true)
+  })
+
+  it('backward compatible: no constraint fields', () => {
+    const json = JSON.stringify([
+      { name: 'Box', widthCm: 50, heightCm: 40, depthCm: 30, weightKg: 100 },
+    ])
+
+    const result = parseCargoJSON(json)
+    expect(result.defs).toHaveLength(1)
+    expect(result.defs[0]!.maxStackWeightKg).toBeUndefined()
+    expect(result.defs[0]!.noStack).toBeUndefined()
+    expect(result.defs[0]!.noFlip).toBeUndefined()
   })
 })
 

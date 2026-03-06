@@ -1,9 +1,16 @@
 import { useAppStore } from '../state/store'
-import type { Vec3 } from '../core/types'
+import type { Vec3, CargoItemDef } from '../core/types'
 import { OccupancyMap } from '../core/OccupancyMap'
 import { computeRotatedAABB } from '../core/Voxelizer'
+import { ORIENTATIONS } from '../core/AutoPacker'
 import { useTranslation } from '../i18n'
 import styles from './CargoList.module.css'
+
+/** Y-axis-only orientations for noFlip items */
+const NOFLIP_ORIENTATIONS: Vec3[] = [
+  { x: 0, y: 0, z: 0 },
+  { x: 0, y: 90, z: 0 },
+]
 
 export function CargoList() {
   const cargoDefs = useAppStore((s) => s.cargoDefs)
@@ -16,12 +23,15 @@ export function CargoList() {
     const def = state.cargoDefs.find((d) => d.id === defId)
     if (!def) return
 
-    const rotationDeg: Vec3 = { x: 0, y: 0, z: 0 }
-    const position = findPlacementPosition(
-      def.widthCm, def.heightCm, def.depthCm, rotationDeg,
-    )
-    if (position) {
-      placeCargo(defId, position, rotationDeg)
+    const result = findPlacementWithRotation(def)
+    if (result) {
+      placeCargo(defId, result.position, result.rotation)
+      const newState = useAppStore.getState()
+      const placed = newState.placements[newState.placements.length - 1]
+      if (placed) {
+        newState.setSelectedInstanceId(placed.instanceId)
+        newState.addToast(t.cargoList.placed, 'success')
+      }
     } else {
       useAppStore.getState().addToast(t.cargoList.noPosition, 'error')
     }
@@ -102,18 +112,44 @@ export function CargoList() {
   )
 }
 
-// Auto-placement using OccupancyMap (height map) for O(1) Y-axis resolution.
-function findPlacementPosition(
-  w: number, h: number, d: number,
-  rotationDeg: Vec3,
-): Vec3 | null {
+/** Try all rotation candidates and find the first placement position */
+function findPlacementWithRotation(
+  def: CargoItemDef,
+): { position: Vec3; rotation: Vec3 } | null {
   const state = useAppStore.getState()
-  const aabb = computeRotatedAABB(w, h, d, { x: 0, y: 0, z: 0 }, rotationDeg)
-  const aabbW = aabb.max.x - aabb.min.x
-  const aabbH = aabb.max.y - aabb.min.y
-  const aabbD = aabb.max.z - aabb.min.z
+  const orientations = def.noFlip ? NOFLIP_ORIENTATIONS : ORIENTATIONS
+
+  // Deduplicate orientations by effective AABB size
+  const seen = new Set<string>()
+  const candidates: { rot: Vec3; effW: number; effH: number; effD: number; offsetX: number; offsetY: number; offsetZ: number }[] = []
+  for (const rot of orientations) {
+    const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, { x: 0, y: 0, z: 0 }, rot)
+    const effW = aabb.max.x - aabb.min.x
+    const effH = aabb.max.y - aabb.min.y
+    const effD = aabb.max.z - aabb.min.z
+    const key = `${effW},${effH},${effD}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    candidates.push({ rot, effW, effH, effD, offsetX: -aabb.min.x, offsetY: -aabb.min.y, offsetZ: -aabb.min.z })
+  }
+
   const map = OccupancyMap.fromPlacements(
     state.placements, state.cargoDefs, state.container,
   )
-  return map.findPosition(aabbW, aabbH, aabbD)
+
+  for (const c of candidates) {
+    const position = map.findPosition(c.effW, c.effH, c.effD)
+    if (position) {
+      return {
+        position: {
+          x: position.x + c.offsetX,
+          y: position.y + c.offsetY,
+          z: position.z + c.offsetZ,
+        },
+        rotation: c.rot,
+      }
+    }
+  }
+
+  return null
 }

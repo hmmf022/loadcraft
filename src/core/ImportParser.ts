@@ -77,7 +77,7 @@ export function parseCargoCSV(csvText: string): ImportResult {
 
     const color = row['color']?.trim() || randomColor()
 
-    defs.push({
+    const def: CargoItemDef = {
       id: crypto.randomUUID(),
       name,
       widthCm,
@@ -85,7 +85,20 @@ export function parseCargoCSV(csvText: string): ImportResult {
       depthCm,
       weightKg,
       color,
-    })
+    }
+
+    // Optional constraint fields
+    const maxStackStr = row['maxStackWeightKg']?.trim()
+    if (maxStackStr) {
+      const maxStack = parseFloat(maxStackStr)
+      if (!isNaN(maxStack) && maxStack >= 0) def.maxStackWeightKg = maxStack
+    }
+    const noStackStr = row['noStack']?.trim()?.toLowerCase()
+    if (noStackStr === 'true' || noStackStr === '1') def.noStack = true
+    const noFlipStr = row['noFlip']?.trim()?.toLowerCase()
+    if (noFlipStr === 'true' || noFlipStr === '1') def.noFlip = true
+
+    defs.push(def)
   }
 
   return { defs, errors }
@@ -151,7 +164,7 @@ export function parseCargoJSON(jsonText: string): ImportResult {
       ? item['color'].trim()
       : randomColor()
 
-    defs.push({
+    const def: CargoItemDef = {
       id: crypto.randomUUID(),
       name,
       widthCm,
@@ -159,7 +172,16 @@ export function parseCargoJSON(jsonText: string): ImportResult {
       depthCm,
       weightKg,
       color,
-    })
+    }
+
+    // Optional constraint fields
+    if (typeof item['maxStackWeightKg'] === 'number' && item['maxStackWeightKg'] >= 0) {
+      def.maxStackWeightKg = item['maxStackWeightKg']
+    }
+    if (item['noStack'] === true) def.noStack = true
+    if (item['noFlip'] === true) def.noFlip = true
+
+    defs.push(def)
   }
 
   return { defs, errors }

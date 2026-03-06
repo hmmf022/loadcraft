@@ -40,12 +40,17 @@ export const ja: TranslationDict = {
     importError: 'インポートエラー: ${error}',
     samplesLoaded: '${count}件のサンプルを読み込みました',
     samplesError: 'サンプルの読み込みに失敗しました',
+    constraints: '制約',
+    noStack: '上積み禁止',
+    noFlip: '天地無用',
+    maxStackWeight: '上積み上限 (kg)',
   },
   cargoList: {
     empty: '貨物が定義されていません。上のフォームから貨物を追加してください。',
     place: '配置',
     delete: '削除',
     noPosition: '配置可能な位置が見つかりません',
+    placed: '配置しました',
     confirmDeleteDef: 'この貨物定義の配置も同時に削除されます。続行しますか？',
   },
   placement: {
@@ -67,6 +72,7 @@ export const ja: TranslationDict = {
     cogDeviation: '重心偏り: コンテナ中心から大きくずれています',
     floatingCargo: '浮遊荷物: ${count}個の荷物が十分に支持されていません',
     interference: '干渉: ${name1} ↔ ${name2}',
+    stackOverload: '上積み超過: ${name} の上に ${actual}kg (上限 ${max}kg)',
   },
   toolbar: {
     save: 'Save',
@@ -90,6 +96,7 @@ export const ja: TranslationDict = {
     placementOutOfBounds: '貨物がコンテナに収まりません',
     rotationExceedsContainer: '回転後のサイズがコンテナに収まりません',
     rotationCollision: '他の荷物と衝突するため回転できません',
+    noFlipViolation: '天地無用: この荷物は上下反転できません',
   },
   help: {
     leftDrag: '左ドラッグ',

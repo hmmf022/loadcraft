@@ -40,12 +40,17 @@ export interface TranslationDict {
     importError: string
     samplesLoaded: string
     samplesError: string
+    constraints: string
+    noStack: string
+    noFlip: string
+    maxStackWeight: string
   }
   cargoList: {
     empty: string
     place: string
     delete: string
     noPosition: string
+    placed: string
     confirmDeleteDef: string
   }
   placement: {
@@ -67,6 +72,7 @@ export interface TranslationDict {
     cogDeviation: string
     floatingCargo: string
     interference: string
+    stackOverload: string
   }
   toolbar: {
     save: string
@@ -90,6 +96,7 @@ export interface TranslationDict {
     placementOutOfBounds: string
     rotationExceedsContainer: string
     rotationCollision: string
+    noFlipViolation: string
   }
   help: {
     leftDrag: string

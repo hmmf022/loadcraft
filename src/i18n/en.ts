@@ -40,12 +40,17 @@ export const en: TranslationDict = {
     importError: 'Import error: ${error}',
     samplesLoaded: '${count} samples loaded',
     samplesError: 'Failed to load samples',
+    constraints: 'Constraints',
+    noStack: 'No stacking',
+    noFlip: 'Keep upright',
+    maxStackWeight: 'Max stack weight (kg)',
   },
   cargoList: {
     empty: 'No cargo defined. Add cargo using the form above.',
     place: 'Place',
     delete: 'Delete',
     noPosition: 'No available position found',
+    placed: 'Placed successfully',
     confirmDeleteDef: 'Placements of this cargo will also be deleted. Continue?',
   },
   placement: {
@@ -67,6 +72,7 @@ export const en: TranslationDict = {
     cogDeviation: 'CoG Deviation: Far from container center',
     floatingCargo: 'Floating: ${count} item(s) not sufficiently supported',
     interference: 'Interference: ${name1} ↔ ${name2}',
+    stackOverload: 'Stack overload: ${name} has ${actual}kg on top (max ${max}kg)',
   },
   toolbar: {
     save: 'Save',
@@ -90,6 +96,7 @@ export const en: TranslationDict = {
     placementOutOfBounds: 'Cargo does not fit in container',
     rotationExceedsContainer: 'Rotated size does not fit in container',
     rotationCollision: 'Cannot rotate due to collision with other cargo',
+    noFlipViolation: 'This cargo is marked as no-flip (keep upright)',
   },
   help: {
     leftDrag: 'Left drag',

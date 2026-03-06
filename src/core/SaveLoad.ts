@@ -35,6 +35,16 @@ export function validateSaveData(data: unknown): data is SaveData {
     if (typeof cd['depthCm'] !== 'number' || cd['depthCm'] <= 0) return false
     if (typeof cd['weightKg'] !== 'number' || cd['weightKg'] <= 0) return false
     if (typeof cd['color'] !== 'string') return false
+    // Optional constraint fields
+    if (cd['maxStackWeightKg'] !== undefined) {
+      if (typeof cd['maxStackWeightKg'] !== 'number' || cd['maxStackWeightKg'] < 0) return false
+    }
+    if (cd['noStack'] !== undefined) {
+      if (typeof cd['noStack'] !== 'boolean') return false
+    }
+    if (cd['noFlip'] !== undefined) {
+      if (typeof cd['noFlip'] !== 'boolean') return false
+    }
     // Optional blocks field for composite shapes
     if (cd['blocks'] !== undefined) {
       if (!Array.isArray(cd['blocks'])) return false

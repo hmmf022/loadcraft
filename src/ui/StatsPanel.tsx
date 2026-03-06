@@ -7,6 +7,7 @@ export function StatsPanel() {
   const cogDeviation = useAppStore((s) => s.cogDeviation)
   const supportResults = useAppStore((s) => s.supportResults)
   const interferenceResults = useAppStore((s) => s.interferenceResults)
+  const stackViolations = useAppStore((s) => s.stackViolations)
   const container = useAppStore((s) => s.container)
   const placements = useAppStore((s) => s.placements)
 
@@ -35,6 +36,9 @@ export function StatsPanel() {
   }
   for (const pair of interferenceResults) {
     warnings.push(interpolate(t.stats.interference, { name1: pair.name1, name2: pair.name2 }))
+  }
+  for (const v of stackViolations) {
+    warnings.push(interpolate(t.stats.stackOverload, { name: v.name, actual: v.actualStackWeightKg.toFixed(1), max: v.maxStackWeightKg.toFixed(1) }))
   }
 
   return (

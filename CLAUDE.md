@@ -62,10 +62,6 @@ UI action → Zustand store → VoxelGrid (collision) + History (undo)
 
 EN/JA 言語切替。Zustand store (`useI18nStore`) + React hook (`useTranslation()`) + non-React accessor (`getTranslation()`)。`localStorage` key `loadcraft-lang` で永続化、`navigator.language` で自動検出。`interpolate()` でパラメータ付き文字列補間 (`${key}` 形式)。
 
-## 既知の制限事項
-
-- **自動配置の回転未対応** (`src/ui/CargoList.tsx` `findPlacementPosition`): サイドバーの「配置」ボタン経由の自動配置は常に `rotationDeg={0,0,0}` で配置。D&D 経由の配置は回転対応済み。
-
 ## Voxel Shape Editor
 
 ### 概要
