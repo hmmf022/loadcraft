@@ -107,7 +107,7 @@ class VoxelGrid {
   readonly depth: number;
   private data: Uint16Array;
 
-  constructor(options: VoxelGridOptions);
+  constructor(width: number, height: number, depth: number);
 
   // 基本アクセス
   get(x: number, y: number, z: number): number;
@@ -121,10 +121,8 @@ class VoxelGrid {
 
   // 判定
   hasCollision(voxels: Vec3[], excludeId?: number): boolean;
-  isSupported(voxels: Vec3[]): boolean;
 
   // 情報取得
-  getOccupiedVoxels(id: number): Vec3[];
   computeStats(): GridStats;
 
   // ユーティリティ
@@ -141,10 +139,10 @@ class VoxelGrid {
 **処理内容**: 指定された寸法のボクセルグリッドを初期化する。
 
 ```typescript
-constructor(options: VoxelGridOptions) {
-  this.width = options.width;
-  this.height = options.height;
-  this.depth = options.depth;
+constructor(width: number, height: number, depth: number) {
+  this.width = width;
+  this.height = height;
+  this.depth = depth;
 
   const totalSize = this.width * this.height * this.depth;
   this.data = new Uint16Array(totalSize); // 全要素 0 で初期化される
@@ -302,56 +300,7 @@ hasCollision(voxels: Vec3[], excludeId?: number): boolean {
 
 ---
 
-#### `isSupported(voxels: Vec3[]): boolean`
-
-**処理内容**: 指定されたボクセル集合が重力的に支持されているかを判定する。詳細なアルゴリズムは GravityChecker モジュール (セクション 4) を参照。
-
-**計算量**: O(N) - N はボクセルの個数
-
-```typescript
-isSupported(voxels: Vec3[]): boolean {
-  for (let i = 0; i < voxels.length; i++) {
-    const { x, y, z } = voxels[i];
-    if (y === 0) continue; // 床面に接している → 支持されている
-    const below = this.data[x + this.width * ((y - 1) + this.height * z)];
-    if (below !== 0) continue; // 下にオブジェクトがある → 支持されている
-    return false; // 支持されていないボクセルが存在
-  }
-  return true;
-}
-```
-
-> **注意**: この簡易版は「すべてのボクセルが支持されている」ことを要求する厳密な判定である。部分支持の判定は `GravityChecker.checkSupport()` を使用する。
-
----
-
-#### `getOccupiedVoxels(id: number): Vec3[]`
-
-**処理内容**: 指定 ID で占有されているすべてのボクセル座標を返す。
-
-**計算量**: O(W * H * D) - グリッド全体を走査
-
-```typescript
-getOccupiedVoxels(id: number): Vec3[] {
-  const result: Vec3[] = [];
-  const w = this.width;
-  const h = this.height;
-  const d = this.depth;
-  let idx = 0;
-
-  for (let z = 0; z < d; z++) {
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (this.data[idx] === id) {
-          result.push({ x, y, z });
-        }
-        idx++;
-      }
-    }
-  }
-  return result;
-}
-```
+> **注意**: 支持チェックは `GravityChecker.checkSupport()` を使用する。VoxelGrid には支持判定メソッドは含まれない。
 
 ---
 
@@ -1469,15 +1418,13 @@ class HistoryManager {
 
 | メソッド | パラメータ | 戻り値 | 計算量 | 概要 |
 |---------|-----------|--------|--------|------|
-| `constructor` | `options: VoxelGridOptions` | `VoxelGrid` | O(W*H*D) | グリッド初期化 |
+| `constructor` | `width, height, depth: number` | `VoxelGrid` | O(W*H*D) | グリッド初期化 |
 | `get` | `x, y, z: number` | `number` | O(1) | ボクセル値取得 |
 | `set` | `x, y, z: number, id: number` | `void` | O(1) | ボクセル値設定 |
 | `fillBox` | `x0,y0,z0, x1,y1,z1: number, id: number` | `void` | O(V) | 直方体領域充填 |
 | `fillVoxels` | `voxels: Vec3[], id: number` | `void` | O(N) | 任意ボクセル充填 |
 | `clearObject` | `id: number` | `void` | O(W*H*D) | 指定IDをクリア |
 | `hasCollision` | `voxels: Vec3[], excludeId?: number` | `boolean` | O(N) | 衝突検出 |
-| `isSupported` | `voxels: Vec3[]` | `boolean` | O(N) | 支持判定 (厳密) |
-| `getOccupiedVoxels` | `id: number` | `Vec3[]` | O(W*H*D) | 占有ボクセル取得 |
 | `computeStats` | なし | `GridStats` | O(W*H*D) | 統計情報計算 |
 | `isInBounds` | `x, y, z: number` | `boolean` | O(1) | 範囲チェック |
 | `clone` | なし | `VoxelGrid` | O(W*H*D) | 深いコピー |
