@@ -167,7 +167,7 @@ describe('parseCargoJSON', () => {
     const shapeData = {
       version: 1,
       name: 'L-Shape',
-      gridSize: 10,
+      gridSize: 1,
       blocks: [
         { x: 0, y: 0, z: 0, w: 30, h: 20, d: 10, color: '#ff0000' },
         { x: 0, y: 0, z: 10, w: 10, h: 20, d: 10, color: '#00ff00' },

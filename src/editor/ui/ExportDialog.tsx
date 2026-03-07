@@ -31,12 +31,12 @@ export function ExportDialog({ state, dispatch }: Props) {
     const blocks: ShapeBlock[] = []
     for (const block of state.blocks.values()) {
       blocks.push({
-        x: (block.x - minX) * state.gridSize,
-        y: (block.y - minY) * state.gridSize,
-        z: (block.z - minZ) * state.gridSize,
-        w: block.w * state.gridSize,
-        h: block.h * state.gridSize,
-        d: block.d * state.gridSize,
+        x: block.x - minX,
+        y: block.y - minY,
+        z: block.z - minZ,
+        w: block.w,
+        h: block.h,
+        d: block.d,
         color: block.color,
       })
     }
@@ -44,7 +44,7 @@ export function ExportDialog({ state, dispatch }: Props) {
     const shapeData: ShapeData = {
       version: 1,
       name: state.shapeName,
-      gridSize: 1,
+      gridSize: state.gridSize,
       blocks,
       weightKg: state.weightKg,
     }

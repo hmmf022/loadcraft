@@ -36,9 +36,19 @@ export function validateShapeData(data: unknown): data is ShapeData {
 
 /** Convert ShapeData to a CargoItemDef for use in the simulator */
 export function shapeToCargoItemDef(shape: ShapeData): CargoItemDef {
-  // Compute bounding box from all blocks
+  const gs = shape.gridSize
+  // Scale blocks from cell coordinates to cm
+  const scaledBlocks: ShapeBlock[] = gs === 1
+    ? shape.blocks
+    : shape.blocks.map(b => ({
+        x: b.x * gs, y: b.y * gs, z: b.z * gs,
+        w: b.w * gs, h: b.h * gs, d: b.d * gs,
+        color: b.color,
+      }))
+
+  // Compute bounding box from scaled blocks
   let maxX = 0, maxY = 0, maxZ = 0
-  for (const b of shape.blocks) {
+  for (const b of scaledBlocks) {
     const bx = b.x + b.w
     const by = b.y + b.h
     const bz = b.z + b.d
@@ -54,7 +64,7 @@ export function shapeToCargoItemDef(shape: ShapeData): CargoItemDef {
     heightCm: maxY,
     depthCm: maxZ,
     weightKg: shape.weightKg,
-    color: shape.blocks[0]?.color ?? '#888888',
-    blocks: shape.blocks,
+    color: scaledBlocks[0]?.color ?? '#888888',
+    blocks: scaledBlocks,
   }
 }

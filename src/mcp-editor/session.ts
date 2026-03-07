@@ -206,12 +206,12 @@ export class EditorSession {
     const blocks: ShapeBlock[] = []
     for (const block of this.state.blocks.values()) {
       blocks.push({
-        x: (block.x - minX) * this.state.gridSize,
-        y: (block.y - minY) * this.state.gridSize,
-        z: (block.z - minZ) * this.state.gridSize,
-        w: block.w * this.state.gridSize,
-        h: block.h * this.state.gridSize,
-        d: block.d * this.state.gridSize,
+        x: block.x - minX,
+        y: block.y - minY,
+        z: block.z - minZ,
+        w: block.w,
+        h: block.h,
+        d: block.d,
         color: block.color,
       })
     }
@@ -219,7 +219,7 @@ export class EditorSession {
     const shapeData: ShapeData = {
       version: 1,
       name: this.state.shapeName,
-      gridSize: 1,
+      gridSize: this.state.gridSize,
       blocks,
       weightKg: this.state.weightKg,
     }
