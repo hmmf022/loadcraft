@@ -17,7 +17,6 @@ export function ToolBar() {
   const toggleLabels = useAppStore((s) => s.toggleLabels)
   const forceMode = useAppStore((s) => s.forceMode)
   const toggleForceMode = useAppStore((s) => s.toggleForceMode)
-  const autoPackCargo = useAppStore((s) => s.autoPackCargo)
   const checkInterference = useAppStore((s) => s.checkInterference)
   const snapToGrid = useAppStore((s) => s.snapToGrid)
   const toggleSnap = useAppStore((s) => s.toggleSnap)
@@ -116,9 +115,6 @@ export function ToolBar() {
           ))}
         </select>
       )}
-      <button className={styles.button} onClick={autoPackCargo}>
-        {t.toolbar.autoPack}
-      </button>
       <button className={styles.button} onClick={checkInterference}>
         {t.toolbar.check}
       </button>

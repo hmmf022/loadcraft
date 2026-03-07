@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { autoPack } from '../AutoPacker'
+import { OccupancyMap } from '../OccupancyMap'
 import type { CargoItemDef, ContainerDef } from '../types'
 
 describe('autoPack', () => {
@@ -171,5 +172,48 @@ describe('autoPack', () => {
     expect(result.placements).toHaveLength(1)
     // Should place with identity rotation since all orientations yield same AABB
     expect(result.placements[0]!.rotationDeg).toEqual({ x: 0, y: 0, z: 0 })
+  })
+
+  it('同一defの複数個配置', () => {
+    const def: CargoItemDef = {
+      id: 'a', name: 'A', widthCm: 30, heightCm: 30, depthCm: 30,
+      weightKg: 1, color: '#f00',
+    }
+    // Pass same def 3 times to simulate 3 items
+    const result = autoPack([def, def, def], container, 1)
+    expect(result.placements).toHaveLength(3)
+    expect(result.failedDefIds).toHaveLength(0)
+    // All should have different positions
+    const positions = result.placements.map((p) => `${p.positionCm.x},${p.positionCm.y},${p.positionCm.z}`)
+    expect(new Set(positions).size).toBe(3)
+  })
+
+  it('baseOccMap: pack-staged モード（既存配置を保持）', () => {
+    // Simulate existing placement occupying the origin corner
+    const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+    occMap.markAABB({
+      min: { x: 0, y: 0, z: 0 },
+      max: { x: 50, y: 50, z: 50 },
+    })
+
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'A', widthCm: 30, heightCm: 30, depthCm: 30,
+      weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 10, occMap)
+    expect(result.placements).toHaveLength(1)
+    // Should NOT be at origin (occupied by existing)
+    const pos = result.placements[0]!.positionCm
+    expect(pos.x >= 50 || pos.y >= 50 || pos.z >= 50).toBe(true)
+  })
+
+  it('baseOccMap なし: 空マップから開始', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'A', widthCm: 10, heightCm: 10, depthCm: 10,
+      weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1)
+    expect(result.placements).toHaveLength(1)
+    expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
   })
 })

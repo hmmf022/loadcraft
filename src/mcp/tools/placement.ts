@@ -164,10 +164,13 @@ export function registerPlacementTools(server: McpServer, session: SimulatorSess
 
   server.tool(
     'auto_pack',
-    'Automatically pack all defined cargo items into the container using shelf-packing algorithm',
-    {},
-    async () => {
-      const result = session.autoPackCargo()
+    'Auto-pack cargo into the container. mode="pack_staged" places staged items around existing placements (default). mode="repack" clears all placements and re-packs everything (existing + staged).',
+    {
+      mode: z.enum(['repack', 'pack_staged']).default('pack_staged').describe('Pack mode: "repack" or "pack_staged"'),
+    },
+    async (args) => {
+      const mode = args.mode === 'repack' ? 'repack' : 'packStaged'
+      const result = session.autoPackCargo(mode)
       if (!result.success) {
         return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
       }

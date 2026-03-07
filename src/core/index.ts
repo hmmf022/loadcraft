@@ -10,11 +10,13 @@ export type {
   ShapeBlock,
   DragState,
   CameraView,
+  StagedItem,
+  AutoPackMode,
 } from './types'
 export { CONTAINER_PRESETS } from './types'
 export { VoxelGrid } from './VoxelGrid'
 export { getVoxelGrid, createVoxelGrid, destroyVoxelGrid } from './voxelGridSingleton'
-export { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, BatchCommand } from './History'
+export { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from './History'
 export type { Command } from './History'
 export { computeWeight, computeCogDeviation } from './WeightCalculator'
 export type { CogDeviation } from './WeightCalculator'
@@ -30,6 +32,8 @@ export { checkStackConstraints } from './StackChecker'
 export type { StackViolation } from './StackChecker'
 export { OccupancyMap } from './OccupancyMap'
 export { autoPack, ORIENTATIONS, NOFLIP_ORIENTATIONS } from './AutoPacker'
+export { tryKick } from './WallKick'
+export type { KickResult } from './WallKick'
 export type { PackResult } from './AutoPacker'
 export { validateShapeData, shapeToCargoItemDef } from './ShapeParser'
 export type { ShapeData } from './ShapeParser'

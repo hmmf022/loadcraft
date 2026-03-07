@@ -65,22 +65,25 @@ function isBetter(pos: Vec3, best: Vec3 | null): boolean {
  * Uses height-map for gap-filling placement search.
  */
 export function autoPack(
-  cargoDefs: CargoItemDef[],
+  items: CargoItemDef[],
   container: ContainerDef,
   startInstanceId: number,
+  baseOccMap?: OccupancyMap,
 ): PackResult {
   const placements: PlacedCargo[] = []
   const voxelizeResults: VoxelizeResult[] = []
   const failedDefIds: string[] = []
 
   // 体積降順ソート
-  const sorted = [...cargoDefs].sort((a, b) => {
+  const sorted = [...items].sort((a, b) => {
     const volA = a.widthCm * a.heightCm * a.depthCm
     const volB = b.widthCm * b.heightCm * b.depthCm
     return volB - volA
   })
 
-  const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+  const occMap = baseOccMap
+    ? baseOccMap.clone()
+    : new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
   let nextId = startInstanceId
 
   for (const def of sorted) {

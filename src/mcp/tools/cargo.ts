@@ -105,6 +105,58 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
   )
 
   server.tool(
+    'stage_cargo',
+    'Add items to the staging area for auto-packing',
+    {
+      cargoDefId: z.string().describe('Cargo definition ID'),
+      count: z.number().int().positive().default(1).describe('Number of items to stage'),
+    },
+    async (args) => {
+      const result = session.stageCargo(args.cargoDefId, args.count)
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'unstage_cargo',
+    'Remove items from the staging area',
+    {
+      cargoDefId: z.string().describe('Cargo definition ID'),
+      count: z.number().int().positive().default(1).describe('Number of items to unstage'),
+    },
+    async (args) => {
+      const result = session.unstageCargo(args.cargoDefId, args.count)
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'list_staged',
+    'List all items in the staging area',
+    {},
+    async () => {
+      const staged = session.listStaged()
+      const items = staged.map((s) => {
+        const def = session.cargoDefs.find((d) => d.id === s.cargoDefId)
+        return { cargoDefId: s.cargoDefId, name: def?.name ?? 'unknown', count: s.count }
+      })
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ count: items.length, items }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
     'import_cargo',
     'Import cargo definitions from CSV or JSON string',
     {

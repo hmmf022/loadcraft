@@ -6,6 +6,7 @@ export interface TranslationDict {
     containerSettings: string
     cargoDefinition: string
     cargoList: string
+    stagingArea: string
     placementControls: string
     statistics: string
   }
@@ -48,10 +49,18 @@ export interface TranslationDict {
   cargoList: {
     empty: string
     place: string
+    stage: string
     delete: string
     noPosition: string
     placed: string
     confirmDeleteDef: string
+  }
+  staging: {
+    empty: string
+    packStaged: string
+    repackAll: string
+    clearStage: string
+    confirmRepack: string
   }
   placement: {
     selectCargo: string
@@ -97,6 +106,12 @@ export interface TranslationDict {
     rotationExceedsContainer: string
     rotationCollision: string
     noFlipViolation: string
+    stagedItem: string
+    unstagedItem: string
+    repackComplete: string
+    repackPartial: string
+    kickApplied: string
+    noStagedItems: string
   }
   help: {
     leftDrag: string

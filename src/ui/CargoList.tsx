@@ -16,6 +16,7 @@ export function CargoList() {
   const cargoDefs = useAppStore((s) => s.cargoDefs)
   const removeCargoDef = useAppStore((s) => s.removeCargoDef)
   const placeCargo = useAppStore((s) => s.placeCargo)
+  const stageCargo = useAppStore((s) => s.stageCargo)
   const { t } = useTranslation()
 
   const handlePlace = (defId: string) => {
@@ -98,6 +99,12 @@ export function CargoList() {
               onClick={() => handlePlace(def.id)}
             >
               {t.cargoList.place}
+            </button>
+            <button
+              className={styles.stageButton}
+              onClick={() => stageCargo(def.id)}
+            >
+              {t.cargoList.stage}
             </button>
             <button
               className={styles.deleteButton}

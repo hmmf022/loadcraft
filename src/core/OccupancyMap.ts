@@ -102,6 +102,12 @@ export class OccupancyMap {
     return bestPos
   }
 
+  clone(): OccupancyMap {
+    const copy = new OccupancyMap(this.containerW, this.containerH, this.containerD, this.cellSize)
+    copy.heightMap.set(this.heightMap)
+    return copy
+  }
+
   /** Build from current placements. Optionally exclude one instanceId (for move operations). */
   static fromPlacements(
     placements: PlacedCargo[],

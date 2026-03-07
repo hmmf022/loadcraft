@@ -63,6 +63,24 @@ describe('validateSaveData', () => {
     expect(validateSaveData({ ...validData, nextInstanceId: 0 })).toBe(false)
     expect(validateSaveData({ ...validData, nextInstanceId: -1 })).toBe(false)
   })
+
+  it('accepts data with stagedItems', () => {
+    const data = { ...validData, stagedItems: [{ cargoDefId: 'abc', count: 3 }] }
+    expect(validateSaveData(data)).toBe(true)
+  })
+
+  it('accepts data without stagedItems (backward compat)', () => {
+    expect(validateSaveData(validData)).toBe(true)
+  })
+
+  it('rejects invalid stagedItems (non-array)', () => {
+    expect(validateSaveData({ ...validData, stagedItems: 'bad' })).toBe(false)
+  })
+
+  it('rejects invalid stagedItems entries', () => {
+    expect(validateSaveData({ ...validData, stagedItems: [{ cargoDefId: 123, count: 1 }] })).toBe(false)
+    expect(validateSaveData({ ...validData, stagedItems: [{ cargoDefId: 'abc', count: 0 }] })).toBe(false)
+  })
 })
 
 describe('serializeSaveData', () => {

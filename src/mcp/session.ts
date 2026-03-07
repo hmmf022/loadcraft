@@ -1,7 +1,7 @@
-import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, WeightResult, GridStats } from '../core/types.js'
+import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, WeightResult, GridStats, StagedItem, AutoPackMode } from '../core/types.js'
 import { CONTAINER_PRESETS } from '../core/types.js'
 import { VoxelGrid } from '../core/VoxelGrid.js'
-import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, BatchCommand } from '../core/History.js'
+import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History.js'
 import { autoPack } from '../core/AutoPacker.js'
 import { checkInterference } from '../core/InterferenceChecker.js'
 import type { InterferencePair } from '../core/InterferenceChecker.js'
@@ -17,6 +17,7 @@ import { serializeSaveData, validateSaveData } from '../core/SaveLoad.js'
 import type { SaveData } from '../core/SaveLoad.js'
 import { OccupancyMap } from '../core/OccupancyMap.js'
 import { parseCargoCSV, parseCargoJSON } from '../core/ImportParser.js'
+import { tryKick } from '../core/WallKick.js'
 
 export class SimulatorSession {
   grid: VoxelGrid
@@ -25,6 +26,8 @@ export class SimulatorSession {
   cargoDefs: CargoItemDef[]
   placements: PlacedCargo[]
   nextInstanceId: number
+
+  stagedItems: StagedItem[] = []
 
   constructor() {
     const preset = CONTAINER_PRESETS[0]!
@@ -64,6 +67,7 @@ export class SimulatorSession {
     }
     this.placements = this.placements.filter((p) => p.cargoDefId !== id)
     this.cargoDefs = this.cargoDefs.filter((d) => d.id !== id)
+    this.stagedItems = this.stagedItems.filter((s) => s.cargoDefId !== id)
     return { removedPlacements: toRemove.length }
   }
 
@@ -102,6 +106,34 @@ export class SimulatorSession {
       this.cargoDefs.push(def)
     }
     return result
+  }
+
+  // --- Staging ---
+
+  stageCargo(cargoDefId: string, count: number = 1): { success: boolean; error?: string } {
+    const def = this.cargoDefs.find((d) => d.id === cargoDefId)
+    if (!def) return { success: false, error: 'Cargo definition not found' }
+    const existing = this.stagedItems.find((s) => s.cargoDefId === cargoDefId)
+    if (existing) {
+      existing.count += count
+    } else {
+      this.stagedItems.push({ cargoDefId, count })
+    }
+    return { success: true }
+  }
+
+  unstageCargo(cargoDefId: string, count: number = 1): { success: boolean; error?: string } {
+    const idx = this.stagedItems.findIndex((s) => s.cargoDefId === cargoDefId)
+    if (idx < 0) return { success: false, error: 'Item not found in staging' }
+    this.stagedItems[idx]!.count -= count
+    if (this.stagedItems[idx]!.count <= 0) {
+      this.stagedItems.splice(idx, 1)
+    }
+    return { success: true }
+  }
+
+  listStaged(): StagedItem[] {
+    return this.stagedItems
   }
 
   // --- Placement ---
@@ -231,11 +263,21 @@ export class SimulatorSession {
     // Collision check
     fillFromResult(this.grid, oldResult, 0)
     const hasCollision = checkCollision(this.grid, newResult, instanceId)
-    fillFromResult(this.grid, oldResult, instanceId)
-
     if (hasCollision) {
-      return { success: false, error: 'Collision after rotation' }
+      // Try wall-kick
+      const kick = tryKick(
+        this.grid, def, newPos, newRotation, instanceId,
+        voxelizeCargo, checkCollision,
+      )
+      if (kick) {
+        newPos = kick.position
+        newResult = kick.result
+      } else {
+        fillFromResult(this.grid, oldResult, instanceId)
+        return { success: false, error: 'Collision after rotation' }
+      }
     }
+    fillFromResult(this.grid, oldResult, instanceId)
 
     const updatedPlacement: PlacedCargo = { ...placement, positionCm: newPos, rotationDeg: newRotation }
     const cmd = new RotateCommand(instanceId, oldResult, newResult, def.name, updatedPlacement, placement)
@@ -280,36 +322,107 @@ export class SimulatorSession {
     return { success: true, newY: bestY }
   }
 
-  autoPackCargo(): { success: boolean; placed: number; failed: number; error?: string } {
-    if (this.cargoDefs.length === 0) {
-      return { success: false, placed: 0, failed: 0, error: 'No cargo definitions to pack' }
+  autoPackCargo(mode: AutoPackMode = 'packStaged'): { success: boolean; placed: number; failed: number; error?: string } {
+    if (mode === 'repack') {
+      const allItems: CargoItemDef[] = []
+      for (const p of this.placements) {
+        const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
+        if (def) allItems.push(def)
+      }
+      for (const si of this.stagedItems) {
+        const def = this.cargoDefs.find((d) => d.id === si.cargoDefId)
+        if (def) {
+          for (let i = 0; i < si.count; i++) allItems.push(def)
+        }
+      }
+
+      if (allItems.length === 0) {
+        return { success: false, placed: 0, failed: 0, error: 'No items to repack' }
+      }
+
+      const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
+      for (const p of this.placements) {
+        const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
+        if (!def) continue
+        removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
+      }
+
+      const result = autoPack(allItems, this.container, this.nextInstanceId)
+
+      if (result.placements.length === 0) {
+        return { success: false, placed: 0, failed: allItems.length, error: 'No items could be placed' }
+      }
+
+      const addedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
+      for (let i = 0; i < result.placements.length; i++) {
+        addedEntries.push({ placement: result.placements[i]!, result: result.voxelizeResults[i]! })
+      }
+
+      const repackCmd = new RepackCommand(removedEntries, addedEntries)
+      this.history.executeCommand(repackCmd, this.grid)
+
+      this.placements = result.placements
+      const maxInstanceId = result.placements.reduce(
+        (mx, p) => Math.max(mx, p.instanceId), this.nextInstanceId,
+      )
+      this.nextInstanceId = maxInstanceId + 1
+      this.stagedItems = []
+
+      return { success: true, placed: result.placements.length, failed: result.failedDefIds.length }
+    } else {
+      // packStaged
+      if (this.stagedItems.length === 0) {
+        return { success: false, placed: 0, failed: 0, error: 'No staged items' }
+      }
+
+      const items: CargoItemDef[] = []
+      for (const si of this.stagedItems) {
+        const def = this.cargoDefs.find((d) => d.id === si.cargoDefId)
+        if (def) {
+          for (let i = 0; i < si.count; i++) items.push(def)
+        }
+      }
+
+      if (items.length === 0) {
+        return { success: false, placed: 0, failed: 0, error: 'No staged items' }
+      }
+
+      const occMap = OccupancyMap.fromPlacements(this.placements, this.cargoDefs, this.container)
+      const result = autoPack(items, this.container, this.nextInstanceId, occMap)
+
+      if (result.placements.length === 0) {
+        return { success: false, placed: 0, failed: items.length, error: 'No items could be placed' }
+      }
+
+      const commands: PlaceCommand[] = []
+      for (let i = 0; i < result.placements.length; i++) {
+        const p = result.placements[i]!
+        const r = result.voxelizeResults[i]!
+        const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
+        if (!def) continue
+        commands.push(new PlaceCommand(p.instanceId, r, def.name, p))
+      }
+
+      const batch = new BatchCommand(commands)
+      this.history.executeCommand(batch, this.grid)
+
+      this.placements = [...this.placements, ...result.placements]
+      const maxInstanceId = result.placements.reduce(
+        (mx, p) => Math.max(mx, p.instanceId), this.nextInstanceId,
+      )
+      this.nextInstanceId = maxInstanceId + 1
+
+      // Decrement staged counts
+      const placedCountByDef = new Map<string, number>()
+      for (const p of result.placements) {
+        placedCountByDef.set(p.cargoDefId, (placedCountByDef.get(p.cargoDefId) ?? 0) + 1)
+      }
+      this.stagedItems = this.stagedItems
+        .map((si) => ({ ...si, count: si.count - (placedCountByDef.get(si.cargoDefId) ?? 0) }))
+        .filter((si) => si.count > 0)
+
+      return { success: true, placed: result.placements.length, failed: result.failedDefIds.length }
     }
-
-    const result = autoPack(this.cargoDefs, this.container, this.nextInstanceId)
-
-    if (result.placements.length === 0) {
-      return { success: false, placed: 0, failed: result.failedDefIds.length, error: 'No items could be placed' }
-    }
-
-    const commands: PlaceCommand[] = []
-    for (let i = 0; i < result.placements.length; i++) {
-      const p = result.placements[i]!
-      const r = result.voxelizeResults[i]!
-      const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
-      if (!def) continue
-      commands.push(new PlaceCommand(p.instanceId, r, def.name, p))
-    }
-
-    const batch = new BatchCommand(commands)
-    this.history.executeCommand(batch, this.grid)
-
-    this.placements = [...this.placements, ...result.placements]
-    const maxInstanceId = result.placements.reduce(
-      (mx, p) => Math.max(mx, p.instanceId), this.nextInstanceId
-    )
-    this.nextInstanceId = maxInstanceId + 1
-
-    return { success: true, placed: result.placements.length, failed: result.failedDefIds.length }
   }
 
   findPosition(cargoDefId: string): { position: Vec3 | null } {
@@ -383,6 +496,10 @@ export class SimulatorSession {
       this.placements = this.placements.map((p) =>
         p.instanceId === command.instanceId ? command.oldPlacement : p,
       )
+    } else if (command instanceof RepackCommand) {
+      this.placements = this.placements
+        .filter((p) => !command.added.some((a) => a.placement.instanceId === p.instanceId))
+      this.placements = [...this.placements, ...command.removed.map((r) => r.placement)]
     } else if (command instanceof BatchCommand) {
       this.placements = this.placements.filter((p) =>
         !command.commands.some((c) => c.placement.instanceId === p.instanceId)
@@ -408,6 +525,10 @@ export class SimulatorSession {
       this.placements = this.placements.map((p) =>
         p.instanceId === command.instanceId ? command.placement : p,
       )
+    } else if (command instanceof RepackCommand) {
+      this.placements = this.placements
+        .filter((p) => !command.removed.some((r) => r.placement.instanceId === p.instanceId))
+      this.placements = [...this.placements, ...command.added.map((a) => a.placement)]
     } else if (command instanceof BatchCommand) {
       const addedPlacements = command.commands.map((c) => c.placement)
       this.placements = [...this.placements, ...addedPlacements]
@@ -424,6 +545,7 @@ export class SimulatorSession {
       cargoDefs: this.cargoDefs,
       placements: this.placements,
       nextInstanceId: this.nextInstanceId,
+      stagedItems: this.stagedItems,
     })
   }
 
@@ -446,6 +568,7 @@ export class SimulatorSession {
     this.cargoDefs = data.cargoDefs
     this.placements = data.placements
     this.nextInstanceId = data.nextInstanceId
+    this.stagedItems = data.stagedItems ?? []
     this.history.clear()
 
     // Restore voxel grid
