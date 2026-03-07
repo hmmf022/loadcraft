@@ -19,16 +19,6 @@ export class EditorSession {
     this.state = editorReducer(this.state, action)
     return this.state
   }
-
-  private withHistory(fn: () => boolean): boolean {
-    const before = new Map(this.state.blocks)
-    const result = fn()
-    if (result && this.state.blocks !== before) {
-      this.history.push({ before, after: new Map(this.state.blocks) })
-    }
-    return result
-  }
-
   // --- Blocks ---
 
   placeBlock(x: number, y: number, z: number, w: number, h: number, d: number, color?: string): { success: boolean; error?: string } {
