@@ -76,6 +76,40 @@ docs/               # 設計書
 editor.html         # シェイプエディタ HTML エントリ
 ```
 
+## MCP サーバー (Docker)
+
+2 つの MCP サーバー（simulator / editor）を Docker で実行できます。tsup が全依存を単一 JS ファイルにバンドルするため、ランタイムイメージは Node.js + JS ファイル 2 つだけで動作します。
+
+```bash
+# ビルド
+docker build -t loadcraft-mcp .
+
+# simulator MCP テスト
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | docker run --rm -i loadcraft-mcp
+
+# editor MCP テスト
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | docker run --rm -i loadcraft-mcp node dist-mcp-editor/main.js
+```
+
+### `.mcp.json` 設定例
+
+```json
+{
+  "mcpServers": {
+    "loadcraft": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "loadcraft-mcp"]
+    },
+    "loadcraft-editor": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "loadcraft-mcp", "node", "dist-mcp-editor/main.js"]
+    }
+  }
+}
+```
+
+ファイル永続化が必要な場合は `args` に `-v ./data:/data` を追加してください。
+
 ## ライセンス
 
 [MIT](LICENSE)
