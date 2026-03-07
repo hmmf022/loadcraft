@@ -158,17 +158,18 @@ LLM ↔ stdio (JSON-RPC) ↔ MCP Server (Node.js)
 - **session.ts**: `src/state/store.ts` の配置ビジネスロジックを React/Zustand 非依存で抽出
 - **ビルド**: `tsup` (ESM, Node.js target), `tsconfig.mcp.json` (DOM/WebGPU型を除外)
 
-### Tools (27)
+### Tools (28)
 
 | Category | Tool | Description |
 |----------|------|-------------|
 | Container | `list_container_presets` | プリセット一覧 |
 | Container | `set_container` | コンテナサイズ設定 |
-| Cargo | `add_cargo_def` | 貨物定義追加 |
+| Cargo | `add_cargo_def` | 貨物定義追加（blocks指定で複合形状対応） |
 | Cargo | `update_cargo_def` | 貨物定義更新 |
 | Cargo | `list_cargo_defs` | 貨物定義一覧 |
 | Cargo | `remove_cargo_def` | 貨物定義削除 |
-| Cargo | `import_cargo` | CSV/JSONインポート |
+| Cargo | `import_cargo` | CSV/JSONインポート（ShapeData自動検出） |
+| Cargo | `import_shape` | ShapeData JSONインポート（エディタ連携） |
 | Cargo | `stage_cargo` | ステージングエリアに追加 |
 | Cargo | `unstage_cargo` | ステージングエリアから削除 |
 | Cargo | `list_staged` | ステージングエリア一覧 |

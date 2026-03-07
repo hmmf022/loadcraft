@@ -17,6 +17,7 @@ import { serializeSaveData, validateSaveData } from '../core/SaveLoad.js'
 import type { SaveData } from '../core/SaveLoad.js'
 import { OccupancyMap } from '../core/OccupancyMap.js'
 import { parseCargoCSV, parseCargoJSON } from '../core/ImportParser.js'
+import { validateShapeData, shapeToCargoItemDef } from '../core/ShapeParser.js'
 import { tryKick } from '../core/WallKick.js'
 
 export class SimulatorSession {
@@ -106,6 +107,34 @@ export class SimulatorSession {
       this.cargoDefs.push(def)
     }
     return result
+  }
+
+  importShape(
+    jsonStr: string,
+    overrides?: { noFlip?: boolean; noStack?: boolean; maxStackWeightKg?: number },
+  ): { success: boolean; id?: string; name?: string; error?: string } {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      return { success: false, error: 'Invalid JSON' }
+    }
+
+    if (!validateShapeData(parsed)) {
+      return { success: false, error: 'Invalid ShapeData format (requires version=1, name, gridSize, blocks, weightKg)' }
+    }
+
+    if (parsed.blocks.length === 0) {
+      return { success: false, error: 'ShapeData has no blocks' }
+    }
+
+    const def = shapeToCargoItemDef(parsed)
+    if (overrides?.noFlip !== undefined) def.noFlip = overrides.noFlip
+    if (overrides?.noStack !== undefined) def.noStack = overrides.noStack
+    if (overrides?.maxStackWeightKg !== undefined) def.maxStackWeightKg = overrides.maxStackWeightKg
+
+    this.cargoDefs.push(def)
+    return { success: true, id: def.id, name: def.name }
   }
 
   // --- Staging ---
