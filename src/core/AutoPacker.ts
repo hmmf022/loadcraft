@@ -30,6 +30,9 @@ interface OrientationCandidate {
   effW: number
   effH: number
   effD: number
+  offsetX: number
+  offsetY: number
+  offsetZ: number
 }
 
 /** Get unique orientation candidates for a cargo def, deduplicating identical AABB sizes */
@@ -46,7 +49,7 @@ function getOrientationCandidates(def: CargoItemDef): OrientationCandidate[] {
     const key = `${effW},${effH},${effD}`
     if (seen.has(key)) continue
     seen.add(key)
-    candidates.push({ rot, effW, effH, effD })
+    candidates.push({ rot, effW, effH, effD, offsetX: -aabb.min.x, offsetY: -aabb.min.y, offsetZ: -aabb.min.z })
   }
 
   return candidates
@@ -101,10 +104,14 @@ export function autoPack(
     }
 
     if (bestPos && bestCandidate) {
-      let pos = bestPos
+      let pos = {
+        x: bestPos.x + bestCandidate.offsetX,
+        y: bestPos.y + bestCandidate.offsetY,
+        z: bestPos.z + bestCandidate.offsetZ,
+      }
       let result = def.blocks
         ? voxelizeComposite(def.blocks, pos, bestCandidate.rot)
-        : voxelize(bestCandidate.effW, bestCandidate.effH, bestCandidate.effD, pos, { x: 0, y: 0, z: 0 })
+        : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, bestCandidate.rot)
 
       // 複合形状の回転で AABB がはみ出す場合、位置を補正して再ボクセル化
       const { min, max } = result.aabb
@@ -120,7 +127,7 @@ export function autoPack(
         pos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
         result = def.blocks
           ? voxelizeComposite(def.blocks, pos, bestCandidate.rot)
-          : voxelize(bestCandidate.effW, bestCandidate.effH, bestCandidate.effD, pos, { x: 0, y: 0, z: 0 })
+          : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, bestCandidate.rot)
 
         // 補正後も収まらない場合は配置失敗
         const { min: m2, max: x2 } = result.aabb

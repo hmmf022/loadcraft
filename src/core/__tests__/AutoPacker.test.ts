@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { autoPack } from '../AutoPacker'
 import { OccupancyMap } from '../OccupancyMap'
+import { computeRotatedAABB } from '../Voxelizer'
+import { checkInterference } from '../InterferenceChecker'
 import type { CargoItemDef, ContainerDef } from '../types'
 
 describe('autoPack', () => {
@@ -215,5 +217,50 @@ describe('autoPack', () => {
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(1)
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
+  })
+
+  it('回転配置の AABB が computeRotatedAABB と一致', () => {
+    // 高さ 95cm のアイテム → 高さ 50cm のコンテナでは回転が必要
+    const defs: CargoItemDef[] = [{
+      id: 'tall', name: 'Tall', widthCm: 30, heightCm: 95, depthCm: 20,
+      weightKg: 1, color: '#f00',
+    }]
+    const smallContainer: ContainerDef = {
+      widthCm: 100, heightCm: 50, depthCm: 100, maxPayloadKg: 10000,
+    }
+    const result = autoPack(defs, smallContainer, 1)
+    expect(result.placements).toHaveLength(1)
+
+    const p = result.placements[0]!
+    // 非恒等回転であること
+    expect(p.rotationDeg).not.toEqual({ x: 0, y: 0, z: 0 })
+
+    // InterferenceChecker と同じ方法で AABB を再計算
+    const def = defs[0]!
+    const recomputedAABB = computeRotatedAABB(
+      def.widthCm, def.heightCm, def.depthCm,
+      p.positionCm, p.rotationDeg,
+    )
+    // autoPack が返す voxelizeResult.aabb と一致すること
+    const packAABB = result.voxelizeResults[0]!.aabb
+    expect(recomputedAABB.min).toEqual(packAABB.min)
+    expect(recomputedAABB.max).toEqual(packAABB.max)
+  })
+
+  it('回転配置後に checkInterference が干渉なしを返す', () => {
+    // 回転が必要な2つのアイテムを配置
+    const defs: CargoItemDef[] = [
+      { id: 'a', name: 'A', widthCm: 80, heightCm: 30, depthCm: 40, weightKg: 1, color: '#f00' },
+      { id: 'b', name: 'B', widthCm: 80, heightCm: 30, depthCm: 40, weightKg: 1, color: '#0f0' },
+    ]
+    const narrowContainer: ContainerDef = {
+      widthCm: 50, heightCm: 100, depthCm: 100, maxPayloadKg: 10000,
+    }
+    const result = autoPack(defs, narrowContainer, 1)
+    expect(result.placements.length).toBeGreaterThan(0)
+
+    // checkInterference で干渉なし
+    const interference = checkInterference(result.placements, defs)
+    expect(interference.pairs).toHaveLength(0)
   })
 })
