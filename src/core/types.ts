@@ -71,7 +71,15 @@ export interface DragState {
   currentPosition: Vec3 | null
   currentRotation: Vec3
   isValid: boolean
+  fromStaging?: boolean
 }
+
+export interface StagedItem {
+  cargoDefId: string
+  count: number
+}
+
+export type AutoPackMode = 'repack' | 'packStaged'
 
 export type CameraView = 'free' | 'front' | 'back' | 'left' | 'right' | 'top' | 'isometric'
 

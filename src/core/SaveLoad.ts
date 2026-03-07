@@ -1,4 +1,4 @@
-import type { ContainerDef, CargoItemDef, PlacedCargo } from './types'
+import type { ContainerDef, CargoItemDef, PlacedCargo, StagedItem } from './types'
 
 export interface SaveData {
   version: 1
@@ -6,6 +6,7 @@ export interface SaveData {
   cargoDefs: CargoItemDef[]
   placements: PlacedCargo[]
   nextInstanceId: number
+  stagedItems?: StagedItem[]
 }
 
 export function validateSaveData(data: unknown): data is SaveData {
@@ -76,6 +77,17 @@ export function validateSaveData(data: unknown): data is SaveData {
   // Validate nextInstanceId
   if (typeof d['nextInstanceId'] !== 'number' || d['nextInstanceId'] < 1) return false
 
+  // Validate optional stagedItems
+  if (d['stagedItems'] !== undefined) {
+    if (!Array.isArray(d['stagedItems'])) return false
+    for (const si of d['stagedItems'] as unknown[]) {
+      if (typeof si !== 'object' || si === null) return false
+      const item = si as Record<string, unknown>
+      if (typeof item['cargoDefId'] !== 'string') return false
+      if (typeof item['count'] !== 'number' || item['count'] < 1) return false
+    }
+  }
+
   return true
 }
 
@@ -90,6 +102,7 @@ export function serializeSaveData(state: {
   cargoDefs: CargoItemDef[]
   placements: PlacedCargo[]
   nextInstanceId: number
+  stagedItems?: StagedItem[]
 }): string {
   const data: SaveData = {
     version: 1,
@@ -97,6 +110,7 @@ export function serializeSaveData(state: {
     cargoDefs: state.cargoDefs,
     placements: state.placements,
     nextInstanceId: state.nextInstanceId,
+    ...(state.stagedItems && state.stagedItems.length > 0 && { stagedItems: state.stagedItems }),
   }
   return JSON.stringify(data, null, 2)
 }

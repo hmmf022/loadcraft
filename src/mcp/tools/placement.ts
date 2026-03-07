@@ -10,6 +10,70 @@ const vec3Schema = z.object({
 
 export function registerPlacementTools(server: McpServer, session: SimulatorSession): void {
   server.tool(
+    'list_placements',
+    'List all placed cargo items with their positions, rotations, and cargo definition info',
+    {},
+    async () => {
+      const list = session.placements.map((p) => {
+        const def = session.cargoDefs.find((d) => d.id === p.cargoDefId)
+        return {
+          instanceId: p.instanceId,
+          cargoDefId: p.cargoDefId,
+          name: def?.name ?? 'unknown',
+          position: p.positionCm,
+          rotation: p.rotationDeg,
+          widthCm: def?.widthCm ?? 0,
+          heightCm: def?.heightCm ?? 0,
+          depthCm: def?.depthCm ?? 0,
+          color: def?.color ?? '#000000',
+          hasBlocks: !!(def?.blocks),
+        }
+      })
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ count: list.length, placements: list }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'get_placement',
+    'Get detailed info about a single placed cargo item by instance ID',
+    {
+      instanceId: z.number().int().positive().describe('Instance ID of the placed cargo'),
+    },
+    async (args) => {
+      const placement = session.placements.find((p) => p.instanceId === args.instanceId)
+      if (!placement) {
+        return { content: [{ type: 'text' as const, text: 'Placement not found' }], isError: true }
+      }
+      const def = session.cargoDefs.find((d) => d.id === placement.cargoDefId)
+      if (!def) {
+        return { content: [{ type: 'text' as const, text: 'Cargo definition not found' }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          instanceId: placement.instanceId,
+          cargoDefId: placement.cargoDefId,
+          name: def.name,
+          positionCm: placement.positionCm,
+          rotationDeg: placement.rotationDeg,
+          def: {
+            widthCm: def.widthCm,
+            heightCm: def.heightCm,
+            depthCm: def.depthCm,
+            weightKg: def.weightKg,
+            color: def.color,
+            hasBlocks: !!def.blocks,
+            noFlip: def.noFlip ?? false,
+            noStack: def.noStack ?? false,
+            maxStackWeightKg: def.maxStackWeightKg,
+          },
+        }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
     'place_cargo',
     'Place a cargo item at a specified position (cm). Optionally specify rotation (degrees).',
     {
@@ -100,10 +164,13 @@ export function registerPlacementTools(server: McpServer, session: SimulatorSess
 
   server.tool(
     'auto_pack',
-    'Automatically pack all defined cargo items into the container using shelf-packing algorithm',
-    {},
-    async () => {
-      const result = session.autoPackCargo()
+    'Auto-pack cargo into the container. mode="pack_staged" places staged items around existing placements (default). mode="repack" clears all placements and re-packs everything (existing + staged).',
+    {
+      mode: z.enum(['repack', 'pack_staged']).default('pack_staged').describe('Pack mode: "repack" or "pack_staged"'),
+    },
+    async (args) => {
+      const mode = args.mode === 'repack' ? 'repack' : 'packStaged'
+      const result = session.autoPackCargo(mode)
       if (!result.success) {
         return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
       }

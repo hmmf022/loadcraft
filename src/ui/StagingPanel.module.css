@@ -1,59 +1,83 @@
-.list {
+.panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.item {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px;
+.empty {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 8px 0;
 }
 
-.itemHeader {
+.item {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: grab;
+}
+
+.item:active {
+  cursor: grabbing;
 }
 
 .colorSwatch {
   display: inline-block;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 2px;
   flex-shrink: 0;
 }
 
 .itemName {
   font-size: 13px;
-  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.itemDetails {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
+.count {
+  font-size: 13px;
+  font-family: monospace;
   color: var(--text-secondary);
-  margin-bottom: 6px;
 }
 
-.dims {
-  font-family: monospace;
+.countBtn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
 }
 
-.weight {
-  font-family: monospace;
+.countBtn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 
-.itemActions {
+.actions {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
-.placeButton {
-  padding: 4px 10px;
+.packButton {
+  padding: 5px 10px;
   background: var(--accent);
   color: #fff;
   border: none;
@@ -62,12 +86,12 @@
   cursor: pointer;
 }
 
-.placeButton:hover {
+.packButton:hover {
   background: var(--accent-hover);
 }
 
-.stageButton {
-  padding: 4px 10px;
+.repackButton {
+  padding: 5px 10px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border: 1px solid var(--border);
@@ -76,14 +100,14 @@
   cursor: pointer;
 }
 
-.stageButton:hover {
+.repackButton:hover {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
 }
 
-.deleteButton {
-  padding: 4px 10px;
+.clearButton {
+  padding: 5px 10px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   border: 1px solid var(--border);
@@ -92,14 +116,8 @@
   cursor: pointer;
 }
 
-.deleteButton:hover {
+.clearButton:hover {
   background: var(--danger);
   color: #fff;
   border-color: var(--danger);
-}
-
-.empty {
-  font-size: 13px;
-  color: var(--text-secondary);
-  padding: 12px 0;
 }

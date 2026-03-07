@@ -1,6 +1,7 @@
 import { ContainerSelector } from './ContainerSelector'
 import { CargoEditor } from './CargoEditor'
 import { CargoList } from './CargoList'
+import { StagingPanel } from './StagingPanel'
 import { PlacementControls } from './PlacementControls'
 import { StatsPanel } from './StatsPanel'
 import { useTranslation } from '../i18n'
@@ -30,6 +31,10 @@ export function Sidebar({ className }: SidebarProps) {
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>{t.sidebar.cargoList}</h2>
           <CargoList />
+        </section>
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>{t.sidebar.stagingArea}</h2>
+          <StagingPanel />
         </section>
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>{t.sidebar.placementControls}</h2>

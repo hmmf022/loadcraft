@@ -24,6 +24,15 @@ core/
 ├── GravityChecker.ts     # 浮遊検出・支持判定
 ├── WeightCalculator.ts   # 重量・重心計算
 ├── History.ts            # Undo/Redo (Command パターン)
+├── AutoPacker.ts         # 自動積載アルゴリズム
+├── OccupancyMap.ts       # 2D ハイトマップ (XZ平面)
+├── InterferenceChecker.ts # AABB 干渉チェック
+├── StackChecker.ts       # スタック重量制約チェック
+├── WallKick.ts           # SRS 風オフセット試行
+├── SaveLoad.ts           # 保存・読み込み
+├── ImportParser.ts       # CSV/JSON インポートパーサー
+├── ShapeCompressor.ts    # ボクセル→矩形ブロック圧縮
+├── ShapeParser.ts        # ShapeData バリデーション・変換
 ├── types.ts              # 共通型定義
 └── index.ts              # パブリック API エクスポート
 ```
@@ -107,7 +116,7 @@ class VoxelGrid {
   readonly depth: number;
   private data: Uint16Array;
 
-  constructor(options: VoxelGridOptions);
+  constructor(width: number, height: number, depth: number);
 
   // 基本アクセス
   get(x: number, y: number, z: number): number;
@@ -121,10 +130,8 @@ class VoxelGrid {
 
   // 判定
   hasCollision(voxels: Vec3[], excludeId?: number): boolean;
-  isSupported(voxels: Vec3[]): boolean;
 
   // 情報取得
-  getOccupiedVoxels(id: number): Vec3[];
   computeStats(): GridStats;
 
   // ユーティリティ
@@ -141,10 +148,10 @@ class VoxelGrid {
 **処理内容**: 指定された寸法のボクセルグリッドを初期化する。
 
 ```typescript
-constructor(options: VoxelGridOptions) {
-  this.width = options.width;
-  this.height = options.height;
-  this.depth = options.depth;
+constructor(width: number, height: number, depth: number) {
+  this.width = width;
+  this.height = height;
+  this.depth = depth;
 
   const totalSize = this.width * this.height * this.depth;
   this.data = new Uint16Array(totalSize); // 全要素 0 で初期化される
@@ -302,56 +309,7 @@ hasCollision(voxels: Vec3[], excludeId?: number): boolean {
 
 ---
 
-#### `isSupported(voxels: Vec3[]): boolean`
-
-**処理内容**: 指定されたボクセル集合が重力的に支持されているかを判定する。詳細なアルゴリズムは GravityChecker モジュール (セクション 4) を参照。
-
-**計算量**: O(N) - N はボクセルの個数
-
-```typescript
-isSupported(voxels: Vec3[]): boolean {
-  for (let i = 0; i < voxels.length; i++) {
-    const { x, y, z } = voxels[i];
-    if (y === 0) continue; // 床面に接している → 支持されている
-    const below = this.data[x + this.width * ((y - 1) + this.height * z)];
-    if (below !== 0) continue; // 下にオブジェクトがある → 支持されている
-    return false; // 支持されていないボクセルが存在
-  }
-  return true;
-}
-```
-
-> **注意**: この簡易版は「すべてのボクセルが支持されている」ことを要求する厳密な判定である。部分支持の判定は `GravityChecker.checkSupport()` を使用する。
-
----
-
-#### `getOccupiedVoxels(id: number): Vec3[]`
-
-**処理内容**: 指定 ID で占有されているすべてのボクセル座標を返す。
-
-**計算量**: O(W * H * D) - グリッド全体を走査
-
-```typescript
-getOccupiedVoxels(id: number): Vec3[] {
-  const result: Vec3[] = [];
-  const w = this.width;
-  const h = this.height;
-  const d = this.depth;
-  let idx = 0;
-
-  for (let z = 0; z < d; z++) {
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (this.data[idx] === id) {
-          result.push({ x, y, z });
-        }
-        idx++;
-      }
-    }
-  }
-  return result;
-}
-```
+> **注意**: 支持チェックは `GravityChecker.checkSupport()` を使用する。VoxelGrid には支持判定メソッドは含まれない。
 
 ---
 
@@ -1469,15 +1427,13 @@ class HistoryManager {
 
 | メソッド | パラメータ | 戻り値 | 計算量 | 概要 |
 |---------|-----------|--------|--------|------|
-| `constructor` | `options: VoxelGridOptions` | `VoxelGrid` | O(W*H*D) | グリッド初期化 |
+| `constructor` | `width, height, depth: number` | `VoxelGrid` | O(W*H*D) | グリッド初期化 |
 | `get` | `x, y, z: number` | `number` | O(1) | ボクセル値取得 |
 | `set` | `x, y, z: number, id: number` | `void` | O(1) | ボクセル値設定 |
 | `fillBox` | `x0,y0,z0, x1,y1,z1: number, id: number` | `void` | O(V) | 直方体領域充填 |
 | `fillVoxels` | `voxels: Vec3[], id: number` | `void` | O(N) | 任意ボクセル充填 |
 | `clearObject` | `id: number` | `void` | O(W*H*D) | 指定IDをクリア |
 | `hasCollision` | `voxels: Vec3[], excludeId?: number` | `boolean` | O(N) | 衝突検出 |
-| `isSupported` | `voxels: Vec3[]` | `boolean` | O(N) | 支持判定 (厳密) |
-| `getOccupiedVoxels` | `id: number` | `Vec3[]` | O(W*H*D) | 占有ボクセル取得 |
 | `computeStats` | なし | `GridStats` | O(W*H*D) | 統計情報計算 |
 | `isInBounds` | `x, y, z: number` | `boolean` | O(1) | 範囲チェック |
 | `clone` | なし | `VoxelGrid` | O(W*H*D) | 深いコピー |
@@ -1530,3 +1486,140 @@ class HistoryManager {
 | `MoveCommand` | 貨物を移動 | 旧クリア+新充填 | 新クリア+旧充填 |
 | `RotateCommand` | 貨物を回転 | 旧クリア+新充填 | 新クリア+旧充填 |
 | `RemoveCommand` | 貨物を削除 | ボクセルクリア | ボクセル充填 |
+| `RepackCommand` | auto-pack/repack 用バッチ | 全 remove→全 add | 逆順で復元 |
+| `BatchCommand` | 複数 Command をまとめて 1 undo/redo 単位 | 順次 execute | 逆順 undo |
+
+---
+
+## 8. AutoPacker モジュール
+
+### 8.1 概要
+
+自動積載アルゴリズム。OccupancyMap ベースのハイトマップを用いて、ボリューム降順・6方向回転候補で配置位置を探索する。
+
+### 8.2 インターフェース
+
+```typescript
+interface PackResult {
+  placements: PlacedCargo[]
+  voxelizeResults: VoxelizeResult[]
+  failedDefIds: string[]
+}
+
+function autoPack(
+  items: CargoItemDef[],
+  container: ContainerDef,
+  startInstanceId: number,
+  baseOccMap?: OccupancyMap,
+): PackResult
+```
+
+### 8.3 アルゴリズム概要
+
+1. アイテムをボリューム降順にソート
+2. 各アイテムに対して方向候補を生成（`noFlip` の場合は Y 軸回転のみ2方向、通常は6方向）
+3. 重複する AABB サイズの方向を除外
+4. 各方向で `OccupancyMap.findPosition()` を呼び出し、最適位置を選択
+5. 配置成功したら OccupancyMap を更新、失敗したら `failedDefIds` に追加
+
+---
+
+## 9. OccupancyMap モジュール
+
+### 9.1 概要
+
+コンテナの XZ 平面上の 2D ハイトマップ。各セル (デフォルト10cm単位) が最大占有 Y 高さを保持する。VoxelGrid の全スキャンに比べ、配置位置探索を大幅に高速化する。
+
+### 9.2 インターフェース
+
+```typescript
+class OccupancyMap {
+  constructor(widthCm: number, heightCm: number, depthCm: number, cellSize?: number)
+  markAABB(aabb: { min: Vec3; max: Vec3 }): void
+  getStackHeight(x: number, z: number, w: number, d: number): number
+  findPosition(w: number, h: number, d: number): Vec3 | null
+  clone(): OccupancyMap
+  static fromPlacements(placements: PlacedCargo[], cargoDefs: CargoItemDef[], container: ContainerDef): OccupancyMap
+}
+```
+
+---
+
+## 10. InterferenceChecker モジュール
+
+### 10.1 概要
+
+全配置ペアの AABB 重なりを検出する。O(n²) だが n < 100 のため実用上問題なし。
+
+### 10.2 インターフェース
+
+```typescript
+interface InterferencePair {
+  instanceId1: number
+  instanceId2: number
+  name1: string
+  name2: string
+}
+
+interface InterferenceResult {
+  pairs: InterferencePair[]
+}
+
+function checkInterference(
+  placements: PlacedCargo[],
+  cargoDefs: CargoItemDef[],
+): InterferenceResult
+```
+
+---
+
+## 11. StackChecker モジュール
+
+### 11.1 概要
+
+各配置の上面に積載された重量を再帰的に計算し、`maxStackWeightKg` / `noStack` 制約に違反するペアを検出する。メモ化により効率化。
+
+### 11.2 インターフェース
+
+```typescript
+interface StackViolation {
+  instanceId: number
+  cargoDefId: string
+  name: string
+  maxStackWeightKg: number
+  actualStackWeightKg: number
+}
+
+function checkStackConstraints(
+  placements: PlacedCargo[],
+  cargoDefs: CargoItemDef[],
+): StackViolation[]
+```
+
+---
+
+## 12. WallKick モジュール
+
+### 12.1 概要
+
+SRS (Super Rotation System) 風のオフセット試行。回転後に衝突が発生した場合、14方向のオフセット (±10cm, ±20cm) を順に試して衝突しない位置を探索する。
+
+### 12.2 インターフェース
+
+```typescript
+interface KickResult {
+  position: Vec3
+  rotation: Vec3
+  result: VoxelizeResult
+}
+
+function tryKick(
+  grid: VoxelGrid,
+  def: CargoItemDef,
+  basePos: Vec3,
+  newRot: Vec3,
+  excludeId: number,
+  voxelizeFn: (def: CargoItemDef, pos: Vec3, rot: Vec3) => VoxelizeResult,
+  checkCollisionFn: (grid: VoxelGrid, result: VoxelizeResult, excludeId: number) => boolean,
+): KickResult | null
+```

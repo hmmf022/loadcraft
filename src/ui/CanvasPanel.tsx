@@ -774,7 +774,12 @@ export function CanvasPanel() {
       if (useAppStore.getState().forceMode
         ? isInBounds(snapped, def.widthCm, def.heightCm, def.depthCm, rot, def.blocks)
         : isValidPosition(snapped, def.widthCm, def.heightCm, def.depthCm, rot, undefined, def.blocks)) {
+        const prevCount = store.placements.length
         store.placeCargo(cargoDefId, snapped, rot)
+        // If placed successfully and from staging, decrement staging count
+        if (dragState?.fromStaging && useAppStore.getState().placements.length > prevCount) {
+          useAppStore.getState().unstageCargo(cargoDefId, 1)
+        }
       }
     }
 

@@ -1,9 +1,10 @@
 import { create } from 'zustand'
-import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView, WeightResult } from '../core/types'
+import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView, WeightResult, StagedItem, AutoPackMode } from '../core/types'
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
-import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, BatchCommand } from '../core/History'
+import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History'
 import { autoPack } from '../core/AutoPacker'
+import { OccupancyMap } from '../core/OccupancyMap'
 import { checkInterference } from '../core/InterferenceChecker'
 import type { InterferencePair } from '../core/InterferenceChecker'
 import { voxelize, voxelizeComposite } from '../core/Voxelizer'
@@ -18,6 +19,7 @@ import { getTranslation, interpolate } from '../i18n'
 import type { SaveData } from '../core/SaveLoad'
 import type { VoxelizeResult } from '../core/Voxelizer'
 import type { VoxelGrid } from '../core/VoxelGrid'
+import { tryKick } from '../core/WallKick'
 
 const defaultContainer = CONTAINER_PRESETS[0]!
 const historyManager = new HistoryManager(100)
@@ -49,7 +51,13 @@ export interface AppState {
   moveCargo: (instanceId: number, newPosition: Vec3) => void
   rotateCargo: (instanceId: number, newRotation: Vec3) => void
   dropCargo: (instanceId: number) => void
-  autoPackCargo: () => void
+  autoPackCargo: (mode: AutoPackMode) => void
+
+  // Staging
+  stagedItems: StagedItem[]
+  stageCargo: (cargoDefId: string, count?: number) => void
+  unstageCargo: (cargoDefId: string, count?: number) => void
+  clearStaged: () => void
 
   // Selection
   selectedInstanceId: number | null
@@ -184,9 +192,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const newPlacements = state.placements.filter((p) => p.cargoDefId !== id)
     const newDefs = state.cargoDefs.filter((d) => d.id !== id)
+    const newStaged = state.stagedItems.filter((s) => s.cargoDefId !== id)
     set({
       cargoDefs: newDefs,
       placements: newPlacements,
+      stagedItems: newStaged,
       renderVersion: state.renderVersion + 1,
     })
     scheduleAnalytics()
@@ -377,10 +387,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!get().forceMode) {
       const hasCollision = checkCollision(grid, newResult, instanceId)
       if (hasCollision) {
-        // Restore old
-        fillFromResult(grid, oldResult, instanceId)
-        get().addToast(getTranslation().toasts.rotationCollision, 'error')
-        return
+        // Try wall-kick
+        const kick = tryKick(
+          grid, def, newPos, newRotation, instanceId,
+          voxelizeCargo, checkCollision,
+        )
+        if (kick) {
+          newPos = kick.position
+          newResult = kick.result
+          get().addToast(getTranslation().toasts.kickApplied, 'info')
+        } else {
+          // Restore old
+          fillFromResult(grid, oldResult, instanceId)
+          get().addToast(getTranslation().toasts.rotationCollision, 'error')
+          return
+        }
       }
     }
     // Restore old (RotateCommand.execute will handle the actual change)
@@ -449,62 +470,179 @@ export const useAppStore = create<AppState>((set, get) => ({
     state.moveCargo(instanceId, { x: pos.x, y: bestY, z: pos.z })
   },
 
-  autoPackCargo: () => {
+  autoPackCargo: (mode: AutoPackMode) => {
     const state = get()
-    if (state.cargoDefs.length === 0) {
-      state.addToast(getTranslation().toasts.noCargoForPack, 'error')
-      return
-    }
-
+    const tt = getTranslation()
     const grid = getVoxelGrid()
 
-    const result = autoPack(
-      state.cargoDefs,
-      state.container,
-      state.nextInstanceId,
-    )
+    if (mode === 'repack') {
+      // Collect all items: existing placements + staged items
+      const allItems: CargoItemDef[] = []
 
-    if (result.placements.length === 0) {
-      state.addToast(getTranslation().toasts.noPlaceablePosition, 'error')
-      return
-    }
+      // Existing placements → defs
+      for (const p of state.placements) {
+        const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
+        if (def) allItems.push(def)
+      }
 
-    // BatchCommand を構築
-    const commands: PlaceCommand[] = []
-    for (let i = 0; i < result.placements.length; i++) {
-      const p = result.placements[i]!
-      const r = result.voxelizeResults[i]!
-      const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
-      if (!def) continue
-      commands.push(new PlaceCommand(p.instanceId, r, def.name, p))
-    }
+      // Staged items → defs (expand count)
+      for (const si of state.stagedItems) {
+        const def = state.cargoDefs.find((d) => d.id === si.cargoDefId)
+        if (def) {
+          for (let i = 0; i < si.count; i++) allItems.push(def)
+        }
+      }
 
-    // 方式B: autoPack で grid への書き込みはクリア済み
-    // BatchCommand.execute() で再度 grid に書き込む
-    const batch = new BatchCommand(commands)
-    historyManager.executeCommand(batch, grid)
+      if (allItems.length === 0) {
+        state.addToast(tt.toasts.noCargoForPack, 'error')
+        return
+      }
 
-    const newPlacements = [...state.placements, ...result.placements]
-    const maxInstanceId = result.placements.reduce(
-      (max, p) => Math.max(max, p.instanceId), state.nextInstanceId
-    )
+      // Voxelize existing placements for removal
+      const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
+      for (const p of state.placements) {
+        const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
+        if (!def) continue
+        removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
+      }
 
-    set({
-      placements: newPlacements,
-      nextInstanceId: maxInstanceId + 1,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
+      const result = autoPack(allItems, state.container, state.nextInstanceId)
 
-    const failCount = result.failedDefIds.length
-    const tt = getTranslation()
-    if (failCount > 0) {
-      state.addToast(interpolate(tt.toasts.autoPackPartial, { placed: result.placements.length, failed: failCount }), 'info')
+      if (result.placements.length === 0) {
+        state.addToast(tt.toasts.noPlaceablePosition, 'error')
+        return
+      }
+
+      // Build RepackCommand
+      const addedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
+      for (let i = 0; i < result.placements.length; i++) {
+        addedEntries.push({ placement: result.placements[i]!, result: result.voxelizeResults[i]! })
+      }
+
+      const repackCmd = new RepackCommand(removedEntries, addedEntries)
+      historyManager.executeCommand(repackCmd, grid)
+
+      const maxInstanceId = result.placements.reduce(
+        (mx, p) => Math.max(mx, p.instanceId), state.nextInstanceId,
+      )
+
+      set({
+        placements: result.placements,
+        nextInstanceId: maxInstanceId + 1,
+        stagedItems: [],
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+      scheduleAnalytics()
+
+      const failCount = result.failedDefIds.length
+      if (failCount > 0) {
+        state.addToast(interpolate(tt.toasts.repackPartial, { placed: result.placements.length, failed: failCount }), 'info')
+      } else {
+        state.addToast(interpolate(tt.toasts.repackComplete, { placed: result.placements.length }), 'success')
+      }
     } else {
-      state.addToast(interpolate(tt.toasts.autoPackComplete, { placed: result.placements.length }), 'success')
+      // packStaged
+      if (state.stagedItems.length === 0) {
+        state.addToast(tt.toasts.noStagedItems, 'error')
+        return
+      }
+
+      const items: CargoItemDef[] = []
+      for (const si of state.stagedItems) {
+        const def = state.cargoDefs.find((d) => d.id === si.cargoDefId)
+        if (def) {
+          for (let i = 0; i < si.count; i++) items.push(def)
+        }
+      }
+
+      if (items.length === 0) {
+        state.addToast(tt.toasts.noStagedItems, 'error')
+        return
+      }
+
+      const occMap = OccupancyMap.fromPlacements(state.placements, state.cargoDefs, state.container)
+      const result = autoPack(items, state.container, state.nextInstanceId, occMap)
+
+      if (result.placements.length === 0) {
+        state.addToast(tt.toasts.noPlaceablePosition, 'error')
+        return
+      }
+
+      // BatchCommand of PlaceCommands
+      const commands: PlaceCommand[] = []
+      for (let i = 0; i < result.placements.length; i++) {
+        const p = result.placements[i]!
+        const r = result.voxelizeResults[i]!
+        const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
+        if (!def) continue
+        commands.push(new PlaceCommand(p.instanceId, r, def.name, p))
+      }
+
+      const batch = new BatchCommand(commands)
+      historyManager.executeCommand(batch, grid)
+
+      const newPlacements = [...state.placements, ...result.placements]
+      const maxInstanceId = result.placements.reduce(
+        (mx, p) => Math.max(mx, p.instanceId), state.nextInstanceId,
+      )
+
+      // Decrement staged counts for successfully placed items
+      const placedCountByDef = new Map<string, number>()
+      for (const p of result.placements) {
+        placedCountByDef.set(p.cargoDefId, (placedCountByDef.get(p.cargoDefId) ?? 0) + 1)
+      }
+      const newStaged = state.stagedItems.map((si) => {
+        const placed = placedCountByDef.get(si.cargoDefId) ?? 0
+        return { ...si, count: si.count - placed }
+      }).filter((si) => si.count > 0)
+
+      set({
+        placements: newPlacements,
+        nextInstanceId: maxInstanceId + 1,
+        stagedItems: newStaged,
+        canUndo: historyManager.canUndo,
+        canRedo: historyManager.canRedo,
+        renderVersion: state.renderVersion + 1,
+      })
+      scheduleAnalytics()
+
+      const failCount = result.failedDefIds.length
+      if (failCount > 0) {
+        state.addToast(interpolate(tt.toasts.autoPackPartial, { placed: result.placements.length, failed: failCount }), 'info')
+      } else {
+        state.addToast(interpolate(tt.toasts.autoPackComplete, { placed: result.placements.length }), 'success')
+      }
     }
+  },
+
+  // Staging
+  stagedItems: [],
+  stageCargo: (cargoDefId, count = 1) => {
+    set((state) => {
+      const existing = state.stagedItems.find((s) => s.cargoDefId === cargoDefId)
+      if (existing) {
+        return {
+          stagedItems: state.stagedItems.map((s) =>
+            s.cargoDefId === cargoDefId ? { ...s, count: s.count + count } : s,
+          ),
+        }
+      }
+      return { stagedItems: [...state.stagedItems, { cargoDefId, count }] }
+    })
+    get().addToast(getTranslation().toasts.stagedItem, 'info')
+  },
+  unstageCargo: (cargoDefId, count = 1) => {
+    set((state) => ({
+      stagedItems: state.stagedItems
+        .map((s) => s.cargoDefId === cargoDefId ? { ...s, count: s.count - count } : s)
+        .filter((s) => s.count > 0),
+    }))
+    get().addToast(getTranslation().toasts.unstagedItem, 'info')
+  },
+  clearStaged: () => {
+    set({ stagedItems: [] })
   },
 
   // Selection
@@ -588,6 +726,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       cargoDefs: state.cargoDefs,
       placements: state.placements,
       nextInstanceId: state.nextInstanceId,
+      stagedItems: state.stagedItems,
     })
     downloadJson(json, 'container-layout.json')
   },
@@ -617,6 +756,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       cargoDefs: data.cargoDefs,
       placements: data.placements,
       nextInstanceId: data.nextInstanceId,
+      stagedItems: data.stagedItems ?? [],
       selectedInstanceId: null,
       dragState: null,
       canUndo: false,
@@ -649,6 +789,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       newPlacements = state.placements.map((p) =>
         p.instanceId === command.instanceId ? command.oldPlacement : p,
       )
+    } else if (command instanceof RepackCommand) {
+      newPlacements = state.placements
+        .filter((p) => !command.added.some((a) => a.placement.instanceId === p.instanceId))
+      newPlacements = [...newPlacements, ...command.removed.map((r) => r.placement)]
     } else if (command instanceof BatchCommand) {
       newPlacements = state.placements.filter((p) =>
         !command.commands.some((c) => c.placement.instanceId === p.instanceId)
@@ -685,6 +829,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       newPlacements = state.placements.map((p) =>
         p.instanceId === command.instanceId ? command.placement : p,
       )
+    } else if (command instanceof RepackCommand) {
+      newPlacements = state.placements
+        .filter((p) => !command.removed.some((r) => r.placement.instanceId === p.instanceId))
+      newPlacements = [...newPlacements, ...command.added.map((a) => a.placement)]
     } else if (command instanceof BatchCommand) {
       const addedPlacements = command.commands.map((c) => c.placement)
       newPlacements = [...state.placements, ...addedPlacements]

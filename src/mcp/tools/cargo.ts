@@ -13,6 +13,9 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
       depthCm: z.number().positive().describe('Depth in cm'),
       weightKg: z.number().positive().describe('Weight in kg'),
       color: z.string().default('#4a90d9').describe('Color as hex string (e.g. "#FF0000")'),
+      noFlip: z.boolean().optional().describe('Keep Y-axis upright (only Y-axis rotations)'),
+      noStack: z.boolean().optional().describe('No stacking allowed on top'),
+      maxStackWeightKg: z.number().optional().describe('Max weight allowed on top (kg)'),
     },
     async (args) => {
       const id = crypto.randomUUID()
@@ -24,6 +27,9 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
         depthCm: args.depthCm,
         weightKg: args.weightKg,
         color: args.color,
+        ...(args.noFlip !== undefined && { noFlip: args.noFlip }),
+        ...(args.noStack !== undefined && { noStack: args.noStack }),
+        ...(args.maxStackWeightKg !== undefined && { maxStackWeightKg: args.maxStackWeightKg }),
       })
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ success: true, id, name: args.name }, null, 2) }],
@@ -67,6 +73,85 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
       const result = session.removeCargoDef(args.id)
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ success: true, removedPlacements: result.removedPlacements }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'update_cargo_def',
+    'Update an existing cargo definition. Dimension changes are rejected if the def has active placements.',
+    {
+      id: z.string().describe('Cargo definition ID'),
+      name: z.string().optional().describe('New name'),
+      widthCm: z.number().positive().optional().describe('New width in cm'),
+      heightCm: z.number().positive().optional().describe('New height in cm'),
+      depthCm: z.number().positive().optional().describe('New depth in cm'),
+      weightKg: z.number().positive().optional().describe('New weight in kg'),
+      color: z.string().optional().describe('New color as hex string'),
+      noFlip: z.boolean().optional().describe('Keep Y-axis upright (only Y-axis rotations)'),
+      noStack: z.boolean().optional().describe('No stacking allowed on top'),
+      maxStackWeightKg: z.number().optional().describe('Max weight allowed on top (kg)'),
+    },
+    async (args) => {
+      const { id, ...updates } = args
+      const result = session.updateCargoDef(id, updates)
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'stage_cargo',
+    'Add items to the staging area for auto-packing',
+    {
+      cargoDefId: z.string().describe('Cargo definition ID'),
+      count: z.number().int().positive().default(1).describe('Number of items to stage'),
+    },
+    async (args) => {
+      const result = session.stageCargo(args.cargoDefId, args.count)
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'unstage_cargo',
+    'Remove items from the staging area',
+    {
+      cargoDefId: z.string().describe('Cargo definition ID'),
+      count: z.number().int().positive().default(1).describe('Number of items to unstage'),
+    },
+    async (args) => {
+      const result = session.unstageCargo(args.cargoDefId, args.count)
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'list_staged',
+    'List all items in the staging area',
+    {},
+    async () => {
+      const staged = session.listStaged()
+      const items = staged.map((s) => {
+        const def = session.cargoDefs.find((d) => d.id === s.cargoDefId)
+        return { cargoDefId: s.cargoDefId, name: def?.name ?? 'unknown', count: s.count }
+      })
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ count: items.length, items }, null, 2) }],
       }
     },
   )

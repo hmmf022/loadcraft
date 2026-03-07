@@ -28,7 +28,9 @@
       "heightCm": 50,
       "depthCm": 40,
       "weightKg": 25.5,
-      "color": "#FF6B35"
+      "color": "#FF6B35",
+      "noFlip": true,
+      "maxStackWeightKg": 100
     }
   ],
   "placements": [
@@ -56,7 +58,7 @@
 | `version` | string | 形式バージョン。将来の互換性確保のために使用する。現在は `"1.0"` 固定。 |
 | `savedAt` | string | ISO 8601 形式の保存日時（例: `"2026-02-18T12:00:00Z"`）。 |
 | `container` | ContainerDef | コンテナの定義オブジェクト。`widthCm`、`heightCm`、`depthCm`、`maxPayloadKg` を含む。 |
-| `cargoDefs` | CargoItemDef[] | 定義済みのすべての荷物タイプの配列。各要素は `id`、`name`、`widthCm`、`heightCm`、`depthCm`、`weightKg`、`color` を持つ。 |
+| `cargoDefs` | CargoItemDef[] | 定義済みのすべての荷物タイプの配列。各要素は `id`、`name`、`widthCm`、`heightCm`、`depthCm`、`weightKg`、`color` を必須フィールドとして持つ。オプションフィールド: `blocks`（ShapeBlock[]、複合形状）、`noFlip`（boolean、天地固定）、`noStack`（boolean、スタック禁止）、`maxStackWeightKg`（number、上面最大積載重量 kg）。 |
 | `placements` | Placement[] | 配置済み荷物の配列。ボクセルデータは含まない（読み込み時に再計算される）。 |
 | `nextInstanceId` | number | 次に配置する荷物に割り当てるインスタンスIDのカウンター。 |
 

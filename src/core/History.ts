@@ -149,6 +149,44 @@ export class RotateCommand implements Command {
   }
 }
 
+export class RepackCommand implements Command {
+  removed: { placement: PlacedCargo; result: VoxelizeResult }[]
+  added: { placement: PlacedCargo; result: VoxelizeResult }[]
+  placement: PlacedCargo
+
+  constructor(
+    removed: { placement: PlacedCargo; result: VoxelizeResult }[],
+    added: { placement: PlacedCargo; result: VoxelizeResult }[],
+  ) {
+    this.removed = removed
+    this.added = added
+    this.placement = added[0]?.placement ?? removed[0]!.placement
+  }
+
+  execute(grid: VoxelGrid): boolean {
+    for (const r of this.removed) {
+      fillFromResult(grid, r.result, 0)
+    }
+    for (const a of this.added) {
+      fillFromResult(grid, a.result, a.placement.instanceId)
+    }
+    return true
+  }
+
+  undo(grid: VoxelGrid): void {
+    for (const a of this.added) {
+      fillFromResult(grid, a.result, 0)
+    }
+    for (const r of this.removed) {
+      fillFromResult(grid, r.result, r.placement.instanceId)
+    }
+  }
+
+  getDescription(): string {
+    return `Repack (${this.added.length} items)`
+  }
+}
+
 export class BatchCommand implements Command {
   commands: Command[]
   placement: PlacedCargo  // 最初のコマンドの placement を代表使用

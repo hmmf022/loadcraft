@@ -1,6 +1,7 @@
 import type { CargoItemDef, ContainerDef, PlacedCargo, Vec3 } from './types'
 import type { VoxelizeResult } from './Voxelizer'
 import { voxelize, voxelizeComposite, computeRotatedAABB } from './Voxelizer'
+import { OccupancyMap } from './OccupancyMap'
 
 export interface PackResult {
   placements: PlacedCargo[]
@@ -19,7 +20,7 @@ export const ORIENTATIONS: Vec3[] = [
 ]
 
 /** Y-axis-only orientations for noFlip items */
-const NOFLIP_ORIENTATIONS: Vec3[] = [
+export const NOFLIP_ORIENTATIONS: Vec3[] = [
   { x: 0, y: 0, z: 0 },
   { x: 0, y: 90, z: 0 },
 ]
@@ -29,6 +30,9 @@ interface OrientationCandidate {
   effW: number
   effH: number
   effD: number
+  offsetX: number
+  offsetY: number
+  offsetZ: number
 }
 
 /** Get unique orientation candidates for a cargo def, deduplicating identical AABB sizes */
@@ -45,103 +49,106 @@ function getOrientationCandidates(def: CargoItemDef): OrientationCandidate[] {
     const key = `${effW},${effH},${effD}`
     if (seen.has(key)) continue
     seen.add(key)
-    candidates.push({ rot, effW, effH, effD })
+    candidates.push({ rot, effW, effH, effD, offsetX: -aabb.min.x, offsetY: -aabb.min.y, offsetZ: -aabb.min.z })
   }
 
   return candidates
 }
 
+/** Position comparison: prefer smallest X (back wall), then lowest Y */
+function isBetter(pos: Vec3, best: Vec3 | null): boolean {
+  if (!best) return true
+  if (pos.x < best.x) return true
+  if (pos.x === best.x && pos.y < best.y) return true
+  return false
+}
+
 /**
- * AABB shelf-packing algorithm with rotation support.
- * Cursor advances through rows/layers. At each position, tries all
- * orientation candidates and picks the one with smallest footprint that fits.
+ * OccupancyMap-based packing algorithm with rotation support.
+ * Uses height-map for gap-filling placement search.
  */
 export function autoPack(
-  cargoDefs: CargoItemDef[],
+  items: CargoItemDef[],
   container: ContainerDef,
   startInstanceId: number,
+  baseOccMap?: OccupancyMap,
 ): PackResult {
   const placements: PlacedCargo[] = []
   const voxelizeResults: VoxelizeResult[] = []
   const failedDefIds: string[] = []
 
   // 体積降順ソート
-  const sorted = [...cargoDefs].sort((a, b) => {
+  const sorted = [...items].sort((a, b) => {
     const volA = a.widthCm * a.heightCm * a.depthCm
     const volB = b.widthCm * b.heightCm * b.depthCm
     return volB - volA
   })
 
+  const occMap = baseOccMap
+    ? baseOccMap.clone()
+    : new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
   let nextId = startInstanceId
-  // カーソルを画面奥(X=0)から開始
-  let cursorX = 0
-  let cursorZ = 0
-  let cursorY = 0
-  let rowMaxD = 0
-  let layerMaxH = 0
 
   for (const def of sorted) {
     const candidates = getOrientationCandidates(def)
-    let placed = false
 
-    // Try at current cursor position, then advance if needed
-    for (let attempt = 0; attempt < 3 && !placed; attempt++) {
-      // Find best fitting orientation at current cursor
-      let bestCandidate: OrientationCandidate | null = null
-      let bestFootprint = Infinity
+    let bestPos: Vec3 | null = null
+    let bestCandidate: OrientationCandidate | null = null
 
-      for (const c of candidates) {
-        if (cursorX + c.effW <= container.widthCm &&
-            cursorZ + c.effD <= container.depthCm &&
-            cursorY + c.effH <= container.heightCm) {
-          const footprint = c.effW * c.effD
-          if (footprint < bestFootprint) {
-            bestFootprint = footprint
-            bestCandidate = c
-          }
-        }
-      }
-
-      if (bestCandidate) {
-        const pos = { x: cursorX, y: cursorY, z: cursorZ }
-        const rot = bestCandidate.rot
-
-        const result = def.blocks
-          ? voxelizeComposite(def.blocks, pos, rot)
-          : voxelize(bestCandidate.effW, bestCandidate.effH, bestCandidate.effD, pos, { x: 0, y: 0, z: 0 })
-
-        placements.push({
-          instanceId: nextId,
-          cargoDefId: def.id,
-          positionCm: pos,
-          rotationDeg: rot,
-        })
-        voxelizeResults.push(result)
-        nextId++
-
-        cursorX += bestCandidate.effW
-        rowMaxD = Math.max(rowMaxD, bestCandidate.effD)
-        layerMaxH = Math.max(layerMaxH, bestCandidate.effH)
-        placed = true
-      } else {
-        // Advance cursor
-        if (attempt === 0) {
-          // Advance to next row
-          cursorX = 0
-          cursorZ += rowMaxD
-          rowMaxD = 0
-        } else if (attempt === 1) {
-          // Advance to next layer
-          cursorZ = 0
-          cursorX = 0
-          cursorY += layerMaxH
-          layerMaxH = 0
-          rowMaxD = 0
-        }
+    for (const c of candidates) {
+      const pos = occMap.findPosition(c.effW, c.effH, c.effD)
+      if (pos && isBetter(pos, bestPos)) {
+        bestPos = pos
+        bestCandidate = c
       }
     }
 
-    if (!placed) {
+    if (bestPos && bestCandidate) {
+      let pos = {
+        x: bestPos.x + bestCandidate.offsetX,
+        y: bestPos.y + bestCandidate.offsetY,
+        z: bestPos.z + bestCandidate.offsetZ,
+      }
+      let result = def.blocks
+        ? voxelizeComposite(def.blocks, pos, bestCandidate.rot)
+        : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, bestCandidate.rot)
+
+      // 複合形状の回転で AABB がはみ出す場合、位置を補正して再ボクセル化
+      const { min, max } = result.aabb
+      let dx = 0, dy = 0, dz = 0
+      if (min.x < 0) dx = -min.x
+      if (min.y < 0) dy = -min.y
+      if (min.z < 0) dz = -min.z
+      if (max.x > container.widthCm) dx = container.widthCm - max.x
+      if (max.y > container.heightCm) dy = container.heightCm - max.y
+      if (max.z > container.depthCm) dz = container.depthCm - max.z
+
+      if (dx !== 0 || dy !== 0 || dz !== 0) {
+        pos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
+        result = def.blocks
+          ? voxelizeComposite(def.blocks, pos, bestCandidate.rot)
+          : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, bestCandidate.rot)
+
+        // 補正後も収まらない場合は配置失敗
+        const { min: m2, max: x2 } = result.aabb
+        if (m2.x < 0 || m2.y < 0 || m2.z < 0 ||
+            x2.x > container.widthCm || x2.y > container.heightCm || x2.z > container.depthCm) {
+          failedDefIds.push(def.id)
+          continue
+        }
+      }
+
+      occMap.markAABB(result.aabb)
+
+      placements.push({
+        instanceId: nextId,
+        cargoDefId: def.id,
+        positionCm: pos,
+        rotationDeg: bestCandidate.rot,
+      })
+      voxelizeResults.push(result)
+      nextId++
+    } else {
       failedDefIds.push(def.id)
     }
   }

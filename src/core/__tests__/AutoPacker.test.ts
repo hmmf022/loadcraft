@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { autoPack } from '../AutoPacker'
+import { OccupancyMap } from '../OccupancyMap'
+import { computeRotatedAABB } from '../Voxelizer'
+import { checkInterference } from '../InterferenceChecker'
 import type { CargoItemDef, ContainerDef } from '../types'
 
 describe('autoPack', () => {
@@ -25,7 +28,7 @@ describe('autoPack', () => {
     expect(result.failedDefIds).toHaveLength(0)
   })
 
-  it('2個の直方体: 奥壁から横並び配置', () => {
+  it('2個の直方体: 配置成功', () => {
     const defs: CargoItemDef[] = [
       { id: 'a', name: 'A', widthCm: 50, heightCm: 10, depthCm: 10, weightKg: 1, color: '#f00' },
       { id: 'b', name: 'B', widthCm: 50, heightCm: 10, depthCm: 10, weightKg: 1, color: '#0f0' },
@@ -33,11 +36,9 @@ describe('autoPack', () => {
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(2)
     expect(result.failedDefIds).toHaveLength(0)
-    // Both placed, positions depend on rotation (smallest footprint selected)
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
-    // 2nd item placed adjacent to 1st (X offset = effW of chosen rotation)
+    // 2nd item placed at floor level
     expect(result.placements[1]!.positionCm.y).toBe(0)
-    expect(result.placements[1]!.positionCm.z).toBe(0)
   })
 
   it('体積降順ソート: 大きい荷物が先に配置される', () => {
@@ -78,9 +79,7 @@ describe('autoPack', () => {
     expect(rot).not.toEqual({ x: 0, y: 0, z: 0 })
   })
 
-  it('棚積み: 行折り返し (回転なしアイテム)', () => {
-    // Use noFlip cubes (W=H=D) so rotation doesn't change behavior
-    // 3 items of 60cm width, only 1 fits per row in 100cm container
+  it('棚積み: 2つのアイテムが隣接配置される', () => {
     const defs: CargoItemDef[] = [
       { id: 'a', name: 'A', widthCm: 60, heightCm: 60, depthCm: 60, weightKg: 1, color: '#f00' },
       { id: 'b', name: 'B', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#0f0' },
@@ -89,12 +88,12 @@ describe('autoPack', () => {
     expect(result.placements).toHaveLength(2)
     // 1st (larger volume): x=0, z=0
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
-    // 2nd: x=60 (fits in same row since 60+40=100)
-    expect(result.placements[1]!.positionCm).toEqual({ x: 60, y: 0, z: 0 })
+    // 2nd: should be at floor level (y=0)
+    expect(result.placements[1]!.positionCm.y).toBe(0)
   })
 
-  it('棚積み: 行折り返し occurs when row is full', () => {
-    // 3 cubes of 40cm in 100cm container: first two fit (40+40=80≤100), third wraps
+  it('棚積み: 3つのアイテムが全て配置される', () => {
+    // 3 cubes of 40cm in 100cm container
     const defs: CargoItemDef[] = [
       { id: 'a', name: 'A', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#f00' },
       { id: 'b', name: 'B', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#0f0' },
@@ -103,9 +102,9 @@ describe('autoPack', () => {
     const result = autoPack(defs, container, 1)
     expect(result.placements).toHaveLength(3)
     expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
-    expect(result.placements[1]!.positionCm).toEqual({ x: 40, y: 0, z: 0 })
-    // 3rd wraps to next row (80+40=120>100)
-    expect(result.placements[2]!.positionCm).toEqual({ x: 0, y: 0, z: 40 })
+    // First two items at floor level, third may stack (OccupancyMap prefers X=0)
+    expect(result.placements[0]!.positionCm.y).toBe(0)
+    expect(result.placements[1]!.positionCm.y).toBe(0)
   })
 
   it('棚積み: レイヤー折り返し', () => {
@@ -175,5 +174,93 @@ describe('autoPack', () => {
     expect(result.placements).toHaveLength(1)
     // Should place with identity rotation since all orientations yield same AABB
     expect(result.placements[0]!.rotationDeg).toEqual({ x: 0, y: 0, z: 0 })
+  })
+
+  it('同一defの複数個配置', () => {
+    const def: CargoItemDef = {
+      id: 'a', name: 'A', widthCm: 30, heightCm: 30, depthCm: 30,
+      weightKg: 1, color: '#f00',
+    }
+    // Pass same def 3 times to simulate 3 items
+    const result = autoPack([def, def, def], container, 1)
+    expect(result.placements).toHaveLength(3)
+    expect(result.failedDefIds).toHaveLength(0)
+    // All should have different positions
+    const positions = result.placements.map((p) => `${p.positionCm.x},${p.positionCm.y},${p.positionCm.z}`)
+    expect(new Set(positions).size).toBe(3)
+  })
+
+  it('baseOccMap: pack-staged モード（既存配置を保持）', () => {
+    // Simulate existing placement occupying the origin corner
+    const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+    occMap.markAABB({
+      min: { x: 0, y: 0, z: 0 },
+      max: { x: 50, y: 50, z: 50 },
+    })
+
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'A', widthCm: 30, heightCm: 30, depthCm: 30,
+      weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 10, occMap)
+    expect(result.placements).toHaveLength(1)
+    // Should NOT be at origin (occupied by existing)
+    const pos = result.placements[0]!.positionCm
+    expect(pos.x >= 50 || pos.y >= 50 || pos.z >= 50).toBe(true)
+  })
+
+  it('baseOccMap なし: 空マップから開始', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'A', widthCm: 10, heightCm: 10, depthCm: 10,
+      weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1)
+    expect(result.placements).toHaveLength(1)
+    expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
+  })
+
+  it('回転配置の AABB が computeRotatedAABB と一致', () => {
+    // 高さ 95cm のアイテム → 高さ 50cm のコンテナでは回転が必要
+    const defs: CargoItemDef[] = [{
+      id: 'tall', name: 'Tall', widthCm: 30, heightCm: 95, depthCm: 20,
+      weightKg: 1, color: '#f00',
+    }]
+    const smallContainer: ContainerDef = {
+      widthCm: 100, heightCm: 50, depthCm: 100, maxPayloadKg: 10000,
+    }
+    const result = autoPack(defs, smallContainer, 1)
+    expect(result.placements).toHaveLength(1)
+
+    const p = result.placements[0]!
+    // 非恒等回転であること
+    expect(p.rotationDeg).not.toEqual({ x: 0, y: 0, z: 0 })
+
+    // InterferenceChecker と同じ方法で AABB を再計算
+    const def = defs[0]!
+    const recomputedAABB = computeRotatedAABB(
+      def.widthCm, def.heightCm, def.depthCm,
+      p.positionCm, p.rotationDeg,
+    )
+    // autoPack が返す voxelizeResult.aabb と一致すること
+    const packAABB = result.voxelizeResults[0]!.aabb
+    expect(recomputedAABB.min).toEqual(packAABB.min)
+    expect(recomputedAABB.max).toEqual(packAABB.max)
+  })
+
+  it('回転配置後に checkInterference が干渉なしを返す', () => {
+    // 回転が必要な2つのアイテムを配置
+    const defs: CargoItemDef[] = [
+      { id: 'a', name: 'A', widthCm: 80, heightCm: 30, depthCm: 40, weightKg: 1, color: '#f00' },
+      { id: 'b', name: 'B', widthCm: 80, heightCm: 30, depthCm: 40, weightKg: 1, color: '#0f0' },
+    ]
+    const narrowContainer: ContainerDef = {
+      widthCm: 50, heightCm: 100, depthCm: 100, maxPayloadKg: 10000,
+    }
+    const result = autoPack(defs, narrowContainer, 1)
+    expect(result.placements.length).toBeGreaterThan(0)
+
+    // checkInterference で干渉なし
+    const interference = checkInterference(result.placements, defs)
+    expect(interference.pairs).toHaveLength(0)
   })
 })
