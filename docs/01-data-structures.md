@@ -108,11 +108,15 @@ interface ContainerDef {
 interface CargoItemDef {
   id: string;            // UUID
   name: string;          // 貨物名
-  widthCm: number;       // 回転前の幅 (cm)
+  widthCm: number;       // 回転前の幅 (cm) — 複合形状の場合は AABB 自動計算
   heightCm: number;      // 回転前の高さ (cm)
   depthCm: number;       // 回転前の奥行き (cm)
   weightKg: number;      // 重量 (kg)
   color: string;         // 16進カラー 例: "#FF6B35"
+  blocks?: ShapeBlock[]; // undefined = 従来の直方体 (後方互換)
+  noFlip?: boolean;      // Y軸回転のみ許可（天地固定）
+  noStack?: boolean;     // スタック禁止 (maxStackWeightKg=0 の糖衣)
+  maxStackWeightKg?: number; // 上面最大積載重量 (kg). undefined=無制限
 }
 ```
 
@@ -127,11 +131,38 @@ interface PlacedCargo {
   cargoDefId: string;    // CargoItemDef.id への参照
   positionCm: Vec3;      // 配置位置 (AABB の左・下・手前の角)
   rotationDeg: Vec3;     // オイラー角 (度単位: rx, ry, rz)
-  voxels: Vec3[];        // キャッシュ済みボクセル座標 (position+rotation から算出)
 }
 ```
 
-### 2.5 配置状態 (シーン全体)
+### 2.5 ステージング・自動配置
+
+```typescript
+// --- Staging ---
+
+/** ステージングエリアのアイテム */
+interface StagedItem {
+  cargoDefId: string;    // 対応する CargoItemDef.id
+  count: number;         // 配置予定数
+}
+
+/** 自動配置モード */
+type AutoPackMode = 'repack' | 'packStaged';
+```
+
+### 2.6 シェイプブロック
+
+```typescript
+// --- Shape Block (composite cargo) ---
+
+/** 複合形状を構成する矩形ブロック */
+interface ShapeBlock {
+  x: number; y: number; z: number;  // cm (形状原点からのオフセット)
+  w: number; h: number; d: number;  // cm (ブロック寸法)
+  color: string;                     // "#RRGGBB"
+}
+```
+
+### 2.7 配置状態 (シーン全体)
 
 ```typescript
 // --- Placement State (complete scene) ---
@@ -311,7 +342,7 @@ VoxelGrid (`Uint16Array`) のメモリ使用量を各コンテナタイプごと
 
                     PlacedCargo[]
                           │
-                          │ voxels (runtime)
+                          │ position + rotation → voxelize (runtime)
                           ▼
                      VoxelGrid
                   (実行時のみ、シリアライズ対象外)
@@ -325,7 +356,7 @@ VoxelGrid (`Uint16Array`) のメモリ使用量を各コンテナタイプごと
 | `PlacementState.cargoDefs` → `CargoItemDef[]` | シーン内で使用可能な貨物テンプレート一覧 |
 | `PlacementState.placements` → `PlacedCargo[]` | コンテナ内に配置された貨物インスタンス一覧 |
 | `PlacedCargo.cargoDefId` → `CargoItemDef.id` | 配置された貨物がどのテンプレートに基づくかの参照 |
-| `PlacedCargo.voxels` → `VoxelGrid` | 配置位置と回転から算出されたボクセル座標。VoxelGrid に書き込まれるが、VoxelGrid 自体は `PlacementState` に含まれない (実行時に再構築可能) |
+| `PlacedCargo` → `VoxelGrid` | 配置位置と回転から VoxelGrid にボクセルが書き込まれるが、VoxelGrid 自体は `PlacementState` に含まれない (実行時に再構築可能) |
 
 ### データフロー
 

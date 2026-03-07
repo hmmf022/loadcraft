@@ -1046,12 +1046,15 @@ App
 │   │   └── ImportButton
 │   ├── CargoList
 │   │   └── CargoListItem (× N)
+│   ├── StagingPanel          # ステージングエリア（配置予定アイテム管理）
 │   ├── PlacementControls
 │   └── StatsPanel
 │       └── StatBar (× N)
 ├── CanvasPanel
 ├── ViewButtons
-└── ToolBar
+├── ToolBar
+├── Toast                     # 通知トースト（操作結果フィードバック）
+└── HelpOverlay               # ヘルプオーバーレイ（キーバインド一覧等）
 ```
 
 すべてのコンポーネントは Zustand ストアを介して状態を共有し、props のバケツリレーを最小限に抑える。各コンポーネントは必要なストアスライスのみを `useStore` のセレクタで購読し、不要な再レンダリングを防止する。

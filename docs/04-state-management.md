@@ -36,7 +36,7 @@
 ## 2. ストアインターフェース定義
 
 ```typescript
-interface AppStore {
+interface AppState {
   // --- Container ---
   container: ContainerDef;
   setContainer: (def: ContainerDef) => void;
@@ -44,17 +44,25 @@ interface AppStore {
   // --- Cargo Definitions ---
   cargoDefs: CargoItemDef[];
   addCargoDef: (def: CargoItemDef) => void;
-  updateCargoDef: (id: string, updates: Partial<CargoItemDef>) => void;
+  updateCargoDef: (id: string, updates: Partial<Omit<CargoItemDef, 'id'>>) => void;
   removeCargoDef: (id: string) => void;
   importCargoDefs: (defs: CargoItemDef[]) => void;
 
   // --- Placements ---
   placements: PlacedCargo[];
   nextInstanceId: number;
-  placeCargo: (cargoDefId: string, position: Vec3, rotation: Vec3) => void;
+  placeCargo: (cargoDefId: string, position: Vec3, rotation?: Vec3) => void;
   moveCargo: (instanceId: number, newPosition: Vec3) => void;
   rotateCargo: (instanceId: number, newRotation: Vec3) => void;
   removePlacement: (instanceId: number) => void;
+  dropCargo: (instanceId: number) => void;
+  autoPackCargo: (mode: AutoPackMode) => void;
+
+  // --- Staging ---
+  stagedItems: StagedItem[];
+  stageCargo: (cargoDefId: string, count?: number) => void;
+  unstageCargo: (cargoDefId: string, count?: number) => void;
+  clearStaged: () => void;
 
   // --- Selection ---
   selectedInstanceId: number | null;
@@ -75,6 +83,17 @@ interface AppStore {
   toggleSnap: () => void;
   gridSizeCm: number;
   setGridSize: (size: number) => void;
+  showLabels: boolean;
+  toggleLabels: () => void;
+  forceMode: boolean;
+  toggleForceMode: () => void;
+  sidebarOpen: boolean;
+  toggleSidebar: () => void;
+
+  // --- Toasts ---
+  toasts: { id: number; message: string; type: 'info' | 'success' | 'error' }[];
+  addToast: (message: string, type: 'info' | 'success' | 'error') => void;
+  removeToast: (id: number) => void;
 
   // --- History ---
   canUndo: boolean;
@@ -83,11 +102,19 @@ interface AppStore {
   redo: () => void;
 
   // --- File I/O ---
-  saveState: () => PlacementState;
-  loadState: (state: PlacementState) => void;
+  saveState: () => void;
+  loadState: (data: SaveData) => void;
 
-  // --- Computed (derived) ---
+  // --- Render version ---
+  renderVersion: number;
+
+  // --- Analytics (derived) ---
   weightResult: WeightResult;
+  cogDeviation: CogDeviation | null;
+  supportResults: Map<number, SupportResult>;
+  stackViolations: StackViolation[];
+  interferenceResults: InterferencePair[];
+  checkInterference: () => void;
 }
 
 type CameraView =

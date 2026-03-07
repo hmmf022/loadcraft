@@ -24,6 +24,15 @@ core/
 ├── GravityChecker.ts     # 浮遊検出・支持判定
 ├── WeightCalculator.ts   # 重量・重心計算
 ├── History.ts            # Undo/Redo (Command パターン)
+├── AutoPacker.ts         # 自動積載アルゴリズム
+├── OccupancyMap.ts       # 2D ハイトマップ (XZ平面)
+├── InterferenceChecker.ts # AABB 干渉チェック
+├── StackChecker.ts       # スタック重量制約チェック
+├── WallKick.ts           # SRS 風オフセット試行
+├── SaveLoad.ts           # 保存・読み込み
+├── ImportParser.ts       # CSV/JSON インポートパーサー
+├── ShapeCompressor.ts    # ボクセル→矩形ブロック圧縮
+├── ShapeParser.ts        # ShapeData バリデーション・変換
 ├── types.ts              # 共通型定義
 └── index.ts              # パブリック API エクスポート
 ```
@@ -1477,3 +1486,140 @@ class HistoryManager {
 | `MoveCommand` | 貨物を移動 | 旧クリア+新充填 | 新クリア+旧充填 |
 | `RotateCommand` | 貨物を回転 | 旧クリア+新充填 | 新クリア+旧充填 |
 | `RemoveCommand` | 貨物を削除 | ボクセルクリア | ボクセル充填 |
+| `RepackCommand` | auto-pack/repack 用バッチ | 全 remove→全 add | 逆順で復元 |
+| `BatchCommand` | 複数 Command をまとめて 1 undo/redo 単位 | 順次 execute | 逆順 undo |
+
+---
+
+## 8. AutoPacker モジュール
+
+### 8.1 概要
+
+自動積載アルゴリズム。OccupancyMap ベースのハイトマップを用いて、ボリューム降順・6方向回転候補で配置位置を探索する。
+
+### 8.2 インターフェース
+
+```typescript
+interface PackResult {
+  placements: PlacedCargo[]
+  voxelizeResults: VoxelizeResult[]
+  failedDefIds: string[]
+}
+
+function autoPack(
+  items: CargoItemDef[],
+  container: ContainerDef,
+  startInstanceId: number,
+  baseOccMap?: OccupancyMap,
+): PackResult
+```
+
+### 8.3 アルゴリズム概要
+
+1. アイテムをボリューム降順にソート
+2. 各アイテムに対して方向候補を生成（`noFlip` の場合は Y 軸回転のみ2方向、通常は6方向）
+3. 重複する AABB サイズの方向を除外
+4. 各方向で `OccupancyMap.findPosition()` を呼び出し、最適位置を選択
+5. 配置成功したら OccupancyMap を更新、失敗したら `failedDefIds` に追加
+
+---
+
+## 9. OccupancyMap モジュール
+
+### 9.1 概要
+
+コンテナの XZ 平面上の 2D ハイトマップ。各セル (デフォルト10cm単位) が最大占有 Y 高さを保持する。VoxelGrid の全スキャンに比べ、配置位置探索を大幅に高速化する。
+
+### 9.2 インターフェース
+
+```typescript
+class OccupancyMap {
+  constructor(widthCm: number, heightCm: number, depthCm: number, cellSize?: number)
+  markAABB(aabb: { min: Vec3; max: Vec3 }): void
+  getStackHeight(x: number, z: number, w: number, d: number): number
+  findPosition(w: number, h: number, d: number): Vec3 | null
+  clone(): OccupancyMap
+  static fromPlacements(placements: PlacedCargo[], cargoDefs: CargoItemDef[], container: ContainerDef): OccupancyMap
+}
+```
+
+---
+
+## 10. InterferenceChecker モジュール
+
+### 10.1 概要
+
+全配置ペアの AABB 重なりを検出する。O(n²) だが n < 100 のため実用上問題なし。
+
+### 10.2 インターフェース
+
+```typescript
+interface InterferencePair {
+  instanceId1: number
+  instanceId2: number
+  name1: string
+  name2: string
+}
+
+interface InterferenceResult {
+  pairs: InterferencePair[]
+}
+
+function checkInterference(
+  placements: PlacedCargo[],
+  cargoDefs: CargoItemDef[],
+): InterferenceResult
+```
+
+---
+
+## 11. StackChecker モジュール
+
+### 11.1 概要
+
+各配置の上面に積載された重量を再帰的に計算し、`maxStackWeightKg` / `noStack` 制約に違反するペアを検出する。メモ化により効率化。
+
+### 11.2 インターフェース
+
+```typescript
+interface StackViolation {
+  instanceId: number
+  cargoDefId: string
+  name: string
+  maxStackWeightKg: number
+  actualStackWeightKg: number
+}
+
+function checkStackConstraints(
+  placements: PlacedCargo[],
+  cargoDefs: CargoItemDef[],
+): StackViolation[]
+```
+
+---
+
+## 12. WallKick モジュール
+
+### 12.1 概要
+
+SRS (Super Rotation System) 風のオフセット試行。回転後に衝突が発生した場合、14方向のオフセット (±10cm, ±20cm) を順に試して衝突しない位置を探索する。
+
+### 12.2 インターフェース
+
+```typescript
+interface KickResult {
+  position: Vec3
+  rotation: Vec3
+  result: VoxelizeResult
+}
+
+function tryKick(
+  grid: VoxelGrid,
+  def: CargoItemDef,
+  basePos: Vec3,
+  newRot: Vec3,
+  excludeId: number,
+  voxelizeFn: (def: CargoItemDef, pos: Vec3, rot: Vec3) => VoxelizeResult,
+  checkCollisionFn: (grid: VoxelGrid, result: VoxelizeResult, excludeId: number) => boolean,
+): KickResult | null
+```

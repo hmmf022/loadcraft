@@ -18,12 +18,15 @@ Includes a **Voxel Shape Editor** (`editor.html`) — a Minecraft creative mode-
 - `npm test` — Run all tests (`vitest run`)
 - `npm run test:watch` — Watch mode
 - `npx vitest run src/core/__tests__/VoxelGrid.test.ts` — Run a single test file
+- `npm run build:mcp-editor` — tsup で `dist-mcp-editor/main.js` にバンドルビルド
+- `npm run mcp-editor` — ビルド済みサーバーを実行
+- `npm run mcp-editor:dev` — tsx で開発時直接実行
 
 ## Architecture
 
 ### Three-Layer Design
 
-1. **Core (`src/core/`)** — Data layer. VoxelGrid (collision detection at 1cm resolution), types, History (undo/redo command pattern), Voxelizer, WeightCalculator, GravityChecker, SaveLoad, ImportParser, ShapeCompressor, ShapeParser, AutoPacker, OccupancyMap, InterferenceChecker. No DOM or GPU dependencies (SaveLoad の `downloadJson` のみ DOM 使用).
+1. **Core (`src/core/`)** — Data layer. VoxelGrid (collision detection at 1cm resolution), types, History (undo/redo command pattern; PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand), Voxelizer, WeightCalculator, GravityChecker, SaveLoad, ImportParser, ShapeCompressor, ShapeParser, AutoPacker, OccupancyMap, InterferenceChecker, StackChecker, WallKick. No DOM or GPU dependencies (SaveLoad の `downloadJson` のみ DOM 使用).
 2. **Renderer (`src/renderer/`)** — WebGPU rendering. Shaders (WGSL), camera, pipelines. Receives data from store, outputs to canvas. No React dependencies.
 3. **UI + State (`src/ui/`, `src/state/`)** — React components + Zustand store. Store is the single source of truth, bridges Core and Renderer.
 
@@ -122,6 +125,10 @@ interface ShapeBlock {  // src/core/types.ts
 ### CargoItemDef 拡張 (複合形状対応)
 
 `CargoItemDef` に `blocks?: ShapeBlock[]` フィールドを追加（後方互換: undefined = 従来の直方体）。
+また以下のフィールドも追加（積載制約対応）:
+- `noFlip?: boolean` — Y軸回転のみ許可（天地固定）
+- `noStack?: boolean` — スタック禁止
+- `maxStackWeightKg?: number` — 上面最大積載重量 (kg)
 - **レンダリング**: 1配置 = N GPUインスタンス（ブロックごとに個別のmodel matrix + color）
 - **ボクセル化**: `voxelizeComposite()` で各ブロックを個別にボクセル化し union
 - **ピッキング**: 各ブロックの変換済みAABBを個別PickItemとして追加（同一instanceId）
@@ -151,16 +158,20 @@ LLM ↔ stdio (JSON-RPC) ↔ MCP Server (Node.js)
 - **session.ts**: `src/state/store.ts` の配置ビジネスロジックを React/Zustand 非依存で抽出
 - **ビルド**: `tsup` (ESM, Node.js target), `tsconfig.mcp.json` (DOM/WebGPU型を除外)
 
-### Tools (20)
+### Tools (27)
 
 | Category | Tool | Description |
 |----------|------|-------------|
 | Container | `list_container_presets` | プリセット一覧 |
 | Container | `set_container` | コンテナサイズ設定 |
 | Cargo | `add_cargo_def` | 貨物定義追加 |
+| Cargo | `update_cargo_def` | 貨物定義更新 |
 | Cargo | `list_cargo_defs` | 貨物定義一覧 |
 | Cargo | `remove_cargo_def` | 貨物定義削除 |
 | Cargo | `import_cargo` | CSV/JSONインポート |
+| Cargo | `stage_cargo` | ステージングエリアに追加 |
+| Cargo | `unstage_cargo` | ステージングエリアから削除 |
+| Cargo | `list_staged` | ステージングエリア一覧 |
 | Placement | `place_cargo` | 配置 |
 | Placement | `remove_cargo` | 配置削除 |
 | Placement | `move_cargo` | 移動 |
@@ -168,9 +179,12 @@ LLM ↔ stdio (JSON-RPC) ↔ MCP Server (Node.js)
 | Placement | `drop_cargo` | 重力落下 |
 | Placement | `auto_pack` | 自動配置 |
 | Placement | `find_position` | 配置位置探索 |
+| Placement | `list_placements` | 全配置一覧 |
+| Placement | `get_placement` | 配置詳細取得 |
 | Analysis | `get_status` | 状態・充填率・重量・重心 |
 | Analysis | `check_interference` | AABB干渉チェック |
 | Analysis | `check_support` | 支持力チェック |
+| Analysis | `check_stack_constraints` | スタック重量制約チェック |
 | History | `undo` / `redo` | 操作履歴 |
 | Save | `save_state` / `load_state` | 状態保存・復元 |
 
@@ -182,21 +196,79 @@ src/mcp/
 ├── session.ts         # SimulatorSession (VoxelGrid + placements + history)
 └── tools/
     ├── container.ts   # set_container, list_container_presets
-    ├── cargo.ts       # add_cargo_def, list_cargo_defs, remove_cargo_def, import_cargo
-    ├── placement.ts   # place_cargo, remove_cargo, move_cargo, rotate_cargo, drop_cargo, auto_pack, find_position
-    ├── analysis.ts    # get_status, check_interference, check_support
+    ├── cargo.ts       # add_cargo_def, update_cargo_def, list_cargo_defs, remove_cargo_def, import_cargo, stage_cargo, unstage_cargo, list_staged
+    ├── placement.ts   # place_cargo, remove_cargo, move_cargo, rotate_cargo, drop_cargo, auto_pack, find_position, list_placements, get_placement
+    ├── analysis.ts    # get_status, check_interference, check_support, check_stack_constraints
     ├── history.ts     # undo, redo
     └── save.ts        # save_state, load_state
 ```
 
+## MCP Editor Server (`src/mcp-editor/`)
+
+LLM (Claude等) が Voxel Shape Editor のブロック操作をツールとして直接操作するための MCP Server。
+
+### Commands
+
+- `npm run build:mcp-editor` — tsup で `dist-mcp-editor/main.js` にバンドルビルド
+- `npm run mcp-editor` — ビルド済みサーバーを実行
+- `npm run mcp-editor:dev` — tsx で開発時直接実行
+
+### Architecture
+
+```
+LLM ↔ stdio (JSON-RPC) ↔ MCP Editor Server (Node.js)
+  ├─ EditorSession (blocks Map + history + metadata)
+  └─ src/core/ShapeCompressor を import して圧縮エクスポート
+```
+
+- **ステートフル**: プロセス内にブロック配置状態 + 履歴を保持
+- **session.ts**: エディタの配置ロジックを React 非依存で抽出
+- **ビルド**: `tsup` (ESM, Node.js target)
+
+### Tools (16)
+
+| Category | Tool | Description |
+|----------|------|-------------|
+| Blocks | `place_block` | ブロック配置 |
+| Blocks | `remove_block` | ブロック削除 |
+| Blocks | `paint_block` | ブロック色変更 |
+| Blocks | `clear_all` | 全ブロック削除 |
+| Blocks | `fill_region` | 矩形領域一括配置 |
+| Query | `list_blocks` | 全ブロック一覧 |
+| Query | `get_status` | 状態取得（名前・重量・ブロック数・寸法） |
+| Query | `find_block_at` | 座標のブロック検索 |
+| File | `export_shape` | ShapeData JSON エクスポート |
+| File | `import_shape` | ShapeData JSON インポート |
+| History | `undo` | 操作取り消し |
+| History | `redo` | 操作やり直し |
+| Metadata | `set_name` | 形状名設定 |
+| Metadata | `set_weight` | 重量設定 |
+| Metadata | `set_brush_size` | ブラシサイズ設定 |
+| Metadata | `set_color` | 現在色設定 |
+
+### File Structure
+
+```
+src/mcp-editor/
+├── main.ts            # エントリポイント (McpServer + stdio transport)
+├── session.ts         # EditorSession (blocks Map + history + metadata)
+└── tools/
+    ├── blocks.ts      # place_block, remove_block, paint_block, clear_all, fill_region
+    ├── query.ts       # list_blocks, get_status, find_block_at
+    ├── file.ts        # export_shape, import_shape
+    ├── history.ts     # undo, redo
+    └── metadata.ts    # set_name, set_weight, set_brush_size, set_color
+```
+
 ## Design Documents
 
-Detailed specs are in `docs/` (8 files). Key references:
+Detailed specs are in `docs/` (9 files). Key references:
 - `docs/00-architecture-overview.md` — アーキテクチャ概要
 - `docs/01-data-structures.md` — All type definitions, coordinate system, voxel grid memory layout
-- `docs/02-core-engine.md` — VoxelGrid API, Voxelizer, History command pattern
+- `docs/02-core-engine.md` — VoxelGrid API, Voxelizer, History command pattern, AutoPacker, OccupancyMap, InterferenceChecker, StackChecker, WallKick
 - `docs/03-rendering-engine.md` — WebGPU pipeline configs, shader structures, camera uniform layout (208 bytes), instance data format (80 bytes/instance)
 - `docs/04-state-management.md` — Full Zustand store interface, action flows, renderer integration
 - `docs/05-ui-components.md` — Component hierarchy, CSS modules, dark theme color scheme
 - `docs/06-interaction-design.md` — インタラクション仕様
 - `docs/07-file-formats.md` — ファイルフォーマット仕様
+- `docs/08-mcp-save-load-filepath.md` — MCP save/load ファイルパス対応
