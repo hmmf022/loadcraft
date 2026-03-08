@@ -95,6 +95,56 @@ describe('computeWeight', () => {
     const result = computeWeight(placements, defs, container)
     expect(result.totalWeightKg).toBe(50)
   })
+
+  it('uses block-level volume for composite shapes', () => {
+    // L-shape: two blocks, AABB is 20x20x10 = 4000, but actual block volume = 2000+1000 = 3000
+    const defs: CargoItemDef[] = [{
+      id: 'l',
+      name: 'L-shape',
+      widthCm: 20,
+      heightCm: 20,
+      depthCm: 10,
+      weightKg: 30,
+      color: '#ff0000',
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 20, h: 10, d: 10, color: '#ff0000' },
+        { x: 0, y: 10, z: 0, w: 10, h: 10, d: 10, color: '#ff0000' },
+      ],
+    }]
+    const placements = [makePlacement(1, 'l', 0, 0, 0)]
+    const result = computeWeight(placements, defs, container)
+
+    // Volume should be 3000, not AABB 4000
+    expect(result.fillRatePercent).toBeCloseTo(3000 / (100 * 100 * 100) * 100)
+  })
+
+  it('uses block-level CoG for composite shapes', () => {
+    // L-shape: block1 (0,0,0 20x10x10 vol=2000 center=(10,5,5))
+    //          block2 (0,10,0 10x10x10 vol=1000 center=(5,15,5))
+    // Weighted local CoG: x=(10*2000+5*1000)/3000=25000/3000≈8.333
+    //                     y=(5*2000+15*1000)/3000=25000/3000≈8.333
+    //                     z=(5*2000+5*1000)/3000=15000/3000=5
+    const defs: CargoItemDef[] = [{
+      id: 'l',
+      name: 'L-shape',
+      widthCm: 20,
+      heightCm: 20,
+      depthCm: 10,
+      weightKg: 30,
+      color: '#ff0000',
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 20, h: 10, d: 10, color: '#ff0000' },
+        { x: 0, y: 10, z: 0, w: 10, h: 10, d: 10, color: '#ff0000' },
+      ],
+    }]
+    const placements = [makePlacement(1, 'l', 0, 0, 0)]
+    const result = computeWeight(placements, defs, container)
+
+    // AABB center would be (10, 10, 5) — block CoG should differ
+    expect(result.centerOfGravity.x).toBeCloseTo(25000 / 3000)
+    expect(result.centerOfGravity.y).toBeCloseTo(25000 / 3000)
+    expect(result.centerOfGravity.z).toBeCloseTo(5)
+  })
 })
 
 describe('computeCogDeviation', () => {

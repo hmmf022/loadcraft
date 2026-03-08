@@ -262,6 +262,16 @@ export class SimulatorSession {
     const def = this.cargoDefs.find((d) => d.id === placement.cargoDefId)
     if (!def) return { success: false, error: 'Cargo definition not found' }
 
+    // noFlip check: reject X/Z axis rotation
+    if (def.noFlip) {
+      const oldRot = placement.rotationDeg
+      const xChanged = ((newRotation.x % 360) + 360) % 360 !== ((oldRot.x % 360) + 360) % 360
+      const zChanged = ((newRotation.z % 360) + 360) % 360 !== ((oldRot.z % 360) + 360) % 360
+      if (xChanged || zChanged) {
+        return { success: false, error: 'noFlip cargo cannot be rotated on X/Z axes' }
+      }
+    }
+
     const pos = placement.positionCm
     const oldRot = placement.rotationDeg
 

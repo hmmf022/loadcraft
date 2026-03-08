@@ -6,6 +6,9 @@ export interface ShapeData {
   gridSize: number   // 1 | 5 | 10 cm/cell
   blocks: ShapeBlock[]
   weightKg: number
+  noFlip?: boolean
+  noStack?: boolean
+  maxStackWeightKg?: number
 }
 
 /** Validate a ShapeData JSON object */
@@ -30,6 +33,10 @@ export function validateShapeData(data: unknown): data is ShapeData {
     if (typeof block['d'] !== 'number' || block['d'] <= 0) return false
     if (typeof block['color'] !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(block['color'])) return false
   }
+
+  if (d['noFlip'] !== undefined && typeof d['noFlip'] !== 'boolean') return false
+  if (d['noStack'] !== undefined && typeof d['noStack'] !== 'boolean') return false
+  if (d['maxStackWeightKg'] !== undefined && (typeof d['maxStackWeightKg'] !== 'number' || d['maxStackWeightKg'] < 0)) return false
 
   return true
 }
@@ -66,5 +73,8 @@ export function shapeToCargoItemDef(shape: ShapeData): CargoItemDef {
     weightKg: shape.weightKg,
     color: scaledBlocks[0]?.color ?? '#888888',
     blocks: scaledBlocks,
+    ...(shape.noFlip !== undefined && { noFlip: shape.noFlip }),
+    ...(shape.noStack !== undefined && { noStack: shape.noStack }),
+    ...(shape.maxStackWeightKg !== undefined && { maxStackWeightKg: shape.maxStackWeightKg }),
   }
 }

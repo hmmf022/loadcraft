@@ -1,5 +1,5 @@
 import type { Vec3, ContainerDef, CargoItemDef, PlacedCargo, WeightResult } from './types'
-import { computeRotatedAABB } from './Voxelizer'
+import { computeRotatedAABB, rotateVec3 } from './Voxelizer'
 
 export interface CogDeviation {
   deviationX: number
@@ -37,19 +37,38 @@ export function computeWeight(
     const def = defMap.get(p.cargoDefId)
     if (!def) continue
 
-    const aabb = computeRotatedAABB(
-      def.widthCm, def.heightCm, def.depthCm,
-      p.positionCm, p.rotationDeg,
-    )
-    const centerX = (aabb.min.x + aabb.max.x) / 2
-    const centerY = (aabb.min.y + aabb.max.y) / 2
-    const centerZ = (aabb.min.z + aabb.max.z) / 2
-
     totalWeight += def.weightKg
-    cogX += centerX * def.weightKg
-    cogY += centerY * def.weightKg
-    cogZ += centerZ * def.weightKg
-    totalVolume += def.widthCm * def.heightCm * def.depthCm
+
+    if (def.blocks) {
+      // Composite shape: use block-level volume and center of gravity
+      let blockVol = 0
+      let bCogX = 0, bCogY = 0, bCogZ = 0
+      for (const b of def.blocks) {
+        const vol = b.w * b.h * b.d
+        blockVol += vol
+        bCogX += (b.x + b.w / 2) * vol
+        bCogY += (b.y + b.h / 2) * vol
+        bCogZ += (b.z + b.d / 2) * vol
+      }
+      totalVolume += blockVol
+      const localCog = blockVol > 0
+        ? { x: bCogX / blockVol, y: bCogY / blockVol, z: bCogZ / blockVol }
+        : { x: 0, y: 0, z: 0 }
+      const rotated = rotateVec3(localCog, p.rotationDeg)
+      cogX += (p.positionCm.x + rotated.x) * def.weightKg
+      cogY += (p.positionCm.y + rotated.y) * def.weightKg
+      cogZ += (p.positionCm.z + rotated.z) * def.weightKg
+    } else {
+      // Simple box: use AABB
+      const aabb = computeRotatedAABB(
+        def.widthCm, def.heightCm, def.depthCm,
+        p.positionCm, p.rotationDeg,
+      )
+      cogX += ((aabb.min.x + aabb.max.x) / 2) * def.weightKg
+      cogY += ((aabb.min.y + aabb.max.y) / 2) * def.weightKg
+      cogZ += ((aabb.min.z + aabb.max.z) / 2) * def.weightKg
+      totalVolume += def.widthCm * def.heightCm * def.depthCm
+    }
   }
 
   const cog: Vec3 = totalWeight > 0
