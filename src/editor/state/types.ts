@@ -63,8 +63,8 @@ export const initialEditorState: EditorState = {
   currentColor: '#4a90d9',
   shapeName: 'New Shape',
   weightKg: 10,
-  brushW: 10,
-  brushH: 10,
-  brushD: 10,
+  brushW: 1,
+  brushH: 1,
+  brushD: 1,
   ghostPosition: null,
 }

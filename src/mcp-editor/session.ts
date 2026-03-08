@@ -4,7 +4,7 @@ import { editorReducer } from '../editor/state/editorReducer.js'
 import { EditorHistory } from '../editor/state/history.js'
 import { validateShapeData } from '../core/ShapeParser.js'
 import type { ShapeData } from '../core/ShapeParser.js'
-import type { ShapeBlock } from '../core/types.js'
+import { compressBlocks, expandBlocks } from '../core/ShapeCompressor.js'
 
 export class EditorSession {
   state: EditorState
@@ -21,10 +21,10 @@ export class EditorSession {
   }
   // --- Blocks ---
 
-  placeBlock(x: number, y: number, z: number, w: number, h: number, d: number, color?: string): { success: boolean; error?: string } {
+  placeBlock(x: number, y: number, z: number, color?: string): { success: boolean; error?: string } {
     const c = color ?? this.state.currentColor
     const before = this.state.blocks
-    this.dispatch({ type: 'PLACE_BLOCK', x, y, z, w, h, d, color: c })
+    this.dispatch({ type: 'PLACE_BLOCK', x, y, z, w: 1, h: 1, d: 1, color: c })
     if (this.state.blocks === before) {
       return { success: false, error: 'Block placement failed (overlap or out of bounds)' }
     }
@@ -72,25 +72,10 @@ export class EditorSession {
 
     const c = color ?? this.state.currentColor
     const before = new Map(this.state.blocks)
-    let placed = 0
-    let skipped = 0
-
-    for (let dz = 0; dz < d; dz++) {
-      for (let dy = 0; dy < h; dy++) {
-        for (let dx = 0; dx < w; dx++) {
-          const bx = x + dx
-          const by = y + dy
-          const bz = z + dz
-          const prevBlocks = this.state.blocks
-          this.dispatch({ type: 'PLACE_BLOCK', x: bx, y: by, z: bz, w: 1, h: 1, d: 1, color: c })
-          if (this.state.blocks !== prevBlocks) {
-            placed++
-          } else {
-            skipped++
-          }
-        }
-      }
-    }
+    const sizeBefore = this.state.blocks.size
+    this.dispatch({ type: 'PLACE_BLOCK', x, y, z, w, h, d, color: c })
+    const placed = this.state.blocks.size - sizeBefore
+    const skipped = totalCells - placed
 
     if (placed > 0) {
       this.history.push({ before, after: new Map(this.state.blocks) })
@@ -160,17 +145,8 @@ export class EditorSession {
     }
   }
 
-  findBlockAt(x: number, y: number, z: number): EditorBlock | null {
-    for (const block of this.state.blocks.values()) {
-      if (
-        x >= block.x && x < block.x + block.w &&
-        y >= block.y && y < block.y + block.h &&
-        z >= block.z && z < block.z + block.d
-      ) {
-        return block
-      }
-    }
-    return null
+  findBlockAt(x: number, y: number, z: number) {
+    return this.state.blocks.get(blockKey(x, y, z)) ?? null
   }
 
   // --- History ---
@@ -192,30 +168,7 @@ export class EditorSession {
   // --- File ---
 
   exportShape(): { json: string; shapeData: ShapeData } {
-    // Origin normalization (same as ExportDialog)
-    let minX = Infinity, minY = Infinity, minZ = Infinity
-    for (const block of this.state.blocks.values()) {
-      if (block.x < minX) minX = block.x
-      if (block.y < minY) minY = block.y
-      if (block.z < minZ) minZ = block.z
-    }
-    if (!isFinite(minX)) {
-      minX = 0; minY = 0; minZ = 0
-    }
-
-    const blocks: ShapeBlock[] = []
-    for (const block of this.state.blocks.values()) {
-      blocks.push({
-        x: block.x - minX,
-        y: block.y - minY,
-        z: block.z - minZ,
-        w: block.w,
-        h: block.h,
-        d: block.d,
-        color: block.color,
-      })
-    }
-
+    const blocks = compressBlocks(this.state.blocks, this.state.gridSize)
     const shapeData: ShapeData = {
       version: 1,
       name: this.state.shapeName,
@@ -241,18 +194,7 @@ export class EditorSession {
 
     const data = parsed as ShapeData
 
-    // Direct mapping: ShapeBlock -> EditorBlock (same as ExportDialog import)
-    const cells = new Map<string, EditorBlock>()
-    for (const sb of data.blocks) {
-      const x = Math.round(sb.x / data.gridSize)
-      const y = Math.round(sb.y / data.gridSize)
-      const z = Math.round(sb.z / data.gridSize)
-      const w = Math.round(sb.w / data.gridSize)
-      const h = Math.round(sb.h / data.gridSize)
-      const d = Math.round(sb.d / data.gridSize)
-      const key = blockKey(x, y, z)
-      cells.set(key, { x, y, z, w, h, d, color: sb.color })
-    }
+    const cells = expandBlocks(data.blocks, data.gridSize)
 
     const before = new Map(this.state.blocks)
     this.dispatch({ type: 'LOAD_SHAPE', blocks: cells, name: data.name, weightKg: data.weightKg })
