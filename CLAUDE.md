@@ -26,7 +26,7 @@ Includes a **Voxel Shape Editor** (`editor.html`) — a Minecraft creative mode-
 
 ### Three-Layer Design
 
-1. **Core (`src/core/`)** — Data layer. VoxelGrid (collision detection at 1cm resolution), types, History (undo/redo command pattern; PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand), Voxelizer, WeightCalculator, GravityChecker, SaveLoad, ImportParser, ShapeCompressor, ShapeParser, AutoPacker, OccupancyMap, InterferenceChecker, StackChecker, WallKick. No DOM or GPU dependencies (SaveLoad の `downloadJson` のみ DOM 使用).
+1. **Core (`src/core/`)** — Data layer. VoxelGrid (collision detection at 1cm resolution), types, History (undo/redo command pattern; PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand), Voxelizer, WeightCalculator, GravityChecker, SaveLoad, ImportParser, ShapeCompressor, ShapeParser, AutoPacker, OccupancyMap, InterferenceChecker, StackChecker, WallKick. No DOM or GPU dependencies.
 2. **Renderer (`src/renderer/`)** — WebGPU rendering. Shaders (WGSL), camera, pipelines. Receives data from store, outputs to canvas. No React dependencies.
 3. **UI + State (`src/ui/`, `src/state/`)** — React components + Zustand store. Store is the single source of truth, bridges Core and Renderer.
 

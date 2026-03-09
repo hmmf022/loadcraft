@@ -75,14 +75,15 @@ export function registerPlacementTools(server: McpServer, session: SimulatorSess
 
   server.tool(
     'place_cargo',
-    'Place a cargo item at a specified position (cm). Optionally specify rotation (degrees).',
+    'Place a cargo item at a specified position (cm). Optionally specify rotation (degrees). Use force=true to allow overlapping placement.',
     {
       cargoDefId: z.string().describe('Cargo definition ID'),
       position: vec3Schema.describe('Position in cm {x, y, z}'),
       rotation: vec3Schema.optional().describe('Rotation in degrees {x, y, z}. Default: {0,0,0}'),
+      force: z.boolean().optional().describe('If true, skip collision check and allow overlapping placement. Default: false'),
     },
     async (args) => {
-      const result = session.placeCargo(args.cargoDefId, args.position, args.rotation)
+      const result = session.placeCargo(args.cargoDefId, args.position, args.rotation, args.force)
       if (!result.success) {
         return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
       }

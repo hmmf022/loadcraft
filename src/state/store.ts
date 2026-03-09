@@ -14,7 +14,8 @@ import { checkAllSupports } from '../core/GravityChecker'
 import type { SupportResult } from '../core/GravityChecker'
 import { checkStackConstraints } from '../core/StackChecker'
 import type { StackViolation } from '../core/StackChecker'
-import { serializeSaveData, downloadJson } from '../core/SaveLoad'
+import { serializeSaveData } from '../core/SaveLoad'
+import { downloadJson } from '../ui/downloadJson'
 import { getTranslation, interpolate } from '../i18n'
 import type { SaveData } from '../core/SaveLoad'
 import type { VoxelizeResult } from '../core/Voxelizer'
@@ -659,7 +660,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Grid / Snap
   showGrid: true,
-  toggleGrid: () => set((state) => ({ showGrid: !state.showGrid, renderVersion: state.renderVersion + 1 })),
+  toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
   snapToGrid: false,
   toggleSnap: () => set((state) => ({ snapToGrid: !state.snapToGrid })),
   gridSizeCm: 1,

@@ -171,6 +171,7 @@ export class SimulatorSession {
     cargoDefId: string,
     position: Vec3,
     rotation?: Vec3,
+    force?: boolean,
   ): { success: boolean; instanceId?: number; error?: string } {
     const def = this.cargoDefs.find((d) => d.id === cargoDefId)
     if (!def) return { success: false, error: 'Cargo definition not found' }
@@ -188,7 +189,7 @@ export class SimulatorSession {
       return { success: false, error: 'Placement out of container bounds' }
     }
 
-    if (checkCollision(this.grid, result, instanceId)) {
+    if (!force && checkCollision(this.grid, result, instanceId)) {
       return { success: false, error: 'Collision with existing cargo' }
     }
 

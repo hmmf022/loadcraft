@@ -4,7 +4,7 @@ import { validateShapeData } from '../../core/ShapeParser'
 import type { ShapeData } from '../../core/ShapeParser'
 import { compressBlocks, expandBlocks } from '../../core/ShapeCompressor'
 
-import { downloadJson } from '../../core/SaveLoad'
+import { downloadJson } from '../../ui/downloadJson'
 import { useTranslation } from '../../i18n'
 import styles from './ExportDialog.module.css'
 

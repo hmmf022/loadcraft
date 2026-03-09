@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { compressBlocks, expandBlocks } from '../ShapeCompressor'
-import type { EditorBlock } from '../../editor/state/types'
-import { blockKey } from '../../editor/state/types'
+import type { ShapeBlock } from '../types'
+import { blockKey } from '../types'
 
-function makeBlocks(coords: [number, number, number, string][]): Map<string, EditorBlock> {
-  const m = new Map<string, EditorBlock>()
+function makeBlocks(coords: [number, number, number, string][]): Map<string, ShapeBlock> {
+  const m = new Map<string, ShapeBlock>()
   for (const [x, y, z, color] of coords) {
     m.set(blockKey(x, y, z), { x, y, z, w: 1, h: 1, d: 1, color })
   }

@@ -42,9 +42,7 @@ export type EditorAction =
   | { type: 'REDO' }
   | { type: 'RESTORE'; blocks: Map<string, EditorBlock> }
 
-export function blockKey(x: number, y: number, z: number): string {
-  return `${x},${y},${z}`
-}
+export { blockKey } from '../../core/types'
 
 /** Check if two axis-aligned blocks overlap */
 export function blocksOverlap(a: EditorBlock, b: EditorBlock): boolean {

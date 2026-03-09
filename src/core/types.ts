@@ -83,6 +83,10 @@ export type AutoPackMode = 'repack' | 'packStaged'
 
 export type CameraView = 'free' | 'front' | 'back' | 'left' | 'right' | 'top' | 'isometric'
 
+export function blockKey(x: number, y: number, z: number): string {
+  return `${x},${y},${z}`
+}
+
 export const CONTAINER_PRESETS: ContainerPreset[] = [
   { name: '20ft Standard', widthCm: 590, heightCm: 239, depthCm: 235, maxPayloadKg: 28200 },
   { name: '40ft Standard', widthCm: 1203, heightCm: 239, depthCm: 235, maxPayloadKg: 26680 },
