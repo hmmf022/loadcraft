@@ -113,6 +113,14 @@ export interface TranslationDict {
     kickApplied: string
     noStagedItems: string
   }
+  packFailure: {
+    title: string
+    outOfBounds: string
+    noFeasiblePosition: string
+    collision: string
+    noSupport: string
+    stackConstraint: string
+  }
   help: {
     leftDrag: string
     cameraRotate: string

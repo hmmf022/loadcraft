@@ -1,12 +1,11 @@
 import type { ShapeBlock } from './types'
-import type { EditorBlock } from '../editor/state/types'
-import { blockKey } from '../editor/state/types'
+import { blockKey } from './types'
 
 /**
  * Compress individual voxel cells into rectangular blocks.
  * Groups by color, then greedily extends X→Y→Z.
  */
-export function compressBlocks(cells: Map<string, EditorBlock>, gridSize: number): ShapeBlock[] {
+export function compressBlocks(cells: Map<string, ShapeBlock>, gridSize: number): ShapeBlock[] {
   if (cells.size === 0) return []
 
   // Compute origin offset (min x,y,z)
@@ -105,8 +104,8 @@ export function compressBlocks(cells: Map<string, EditorBlock>, gridSize: number
 /**
  * Expand compressed ShapeBlocks back to individual editor cells.
  */
-export function expandBlocks(shapeBlocks: ShapeBlock[], gridSize: number): Map<string, EditorBlock> {
-  const cells = new Map<string, EditorBlock>()
+export function expandBlocks(shapeBlocks: ShapeBlock[], gridSize: number): Map<string, ShapeBlock> {
+  const cells = new Map<string, ShapeBlock>()
 
   // Compute origin offset for the shape blocks
   let minX = Infinity, minY = Infinity, minZ = Infinity

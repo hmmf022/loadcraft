@@ -1,5 +1,5 @@
 import type { EditorState, EditorAction } from './types'
-import { blockKey, blocksOverlap } from './types'
+import { blockKey } from './types'
 
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
@@ -9,17 +9,22 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       if (x < 0 || y < 0 || z < 0) {
         return state
       }
-      const newBlock = { x, y, z, w, h, d, color }
-      // Overlap check against all existing blocks
-      for (const existing of state.blocks.values()) {
-        if (blocksOverlap(newBlock, existing)) {
-          return state
+      // Fill region with 1×1×1 blocks, skipping occupied cells
+      const newBlocks = new Map(state.blocks)
+      let changed = false
+      for (let dz = 0; dz < d; dz++) {
+        for (let dy = 0; dy < h; dy++) {
+          for (let dx = 0; dx < w; dx++) {
+            const cx = x + dx, cy = y + dy, cz = z + dz
+            const key = blockKey(cx, cy, cz)
+            if (!newBlocks.has(key)) {
+              newBlocks.set(key, { x: cx, y: cy, z: cz, w: 1, h: 1, d: 1, color })
+              changed = true
+            }
+          }
         }
       }
-      const key = blockKey(x, y, z)
-      const newBlocks = new Map(state.blocks)
-      newBlocks.set(key, newBlock)
-      return { ...state, blocks: newBlocks }
+      return changed ? { ...state, blocks: newBlocks } : state
     }
 
     case 'REMOVE_BLOCK': {

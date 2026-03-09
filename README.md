@@ -16,6 +16,7 @@ Container loading simulator with WebGPU 3D visualization.
 - **Grid snap** — 1 / 5 / 10 cm snap options
 - **Responsive layout** — Desktop sidebar + mobile hamburger menu
 - **Voxel Shape Editor** — Minecraft-style block editor for composite cargo shapes
+- **Auto-pack failure reasons** — UI and MCP return detailed reason codes for unplaceable items
 
 ## Requirements
 
@@ -75,6 +76,42 @@ src/
 docs/               # Design documents (Japanese)
 editor.html         # Shape Editor HTML entry
 ```
+
+## MCP Server (Docker)
+
+The two MCP servers (simulator / editor) can be run via Docker. Since tsup bundles all dependencies into a single JS file, the runtime image only needs Node.js + two JS files.
+
+```bash
+# Build
+docker build -t loadcraft-mcp .
+
+# Test simulator MCP
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | docker run --rm -i loadcraft-mcp
+
+# Test editor MCP
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | docker run --rm -i loadcraft-mcp node dist-mcp-editor/main.js
+```
+
+### `.mcp.json` example
+
+```json
+{
+  "mcpServers": {
+    "loadcraft": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "loadcraft-mcp"]
+    },
+    "loadcraft-editor": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "loadcraft-mcp", "node", "dist-mcp-editor/main.js"]
+    }
+  }
+}
+```
+
+Add `-v ./data:/data` to `args` for file persistence (save/load).
+
+`auto_pack` MCP tool responses include `failureReasons` with reason codes for unplaced items.
 
 ## License
 

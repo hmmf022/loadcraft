@@ -113,6 +113,14 @@ export const ja: TranslationDict = {
     kickApplied: '位置を調整しました（ウォールキック）',
     noStagedItems: 'ステージにアイテムがありません',
   },
+  packFailure: {
+    title: '自動積載の失敗理由',
+    outOfBounds: 'コンテナ寸法に収まりません',
+    noFeasiblePosition: '配置可能な位置が見つかりません',
+    collision: '既存荷物と干渉します',
+    noSupport: '下部支持率が不足しています',
+    stackConstraint: '上積み制約に違反します',
+  },
   help: {
     leftDrag: '左ドラッグ',
     cameraRotate: 'カメラ回転',

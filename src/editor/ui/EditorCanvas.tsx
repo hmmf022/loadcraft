@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useState, useInsertionEffect } from 'react'
 import { EditorRenderer } from '../renderer/EditorRenderer'
 import { getPlacementTarget, getBlockTarget } from '../renderer/EditorRaycaster'
-import { DISPLAY_SCALE, blocksOverlap } from '../state/types'
+import { DISPLAY_SCALE, blockKey } from '../state/types'
 import type { EditorState, EditorAction } from '../state/types'
 import { useTranslation } from '../../i18n'
 import styles from './EditorCanvas.module.css'
@@ -85,17 +85,16 @@ export function EditorCanvas({ state, dispatch, theme }: Props) {
         s.blocks, DISPLAY_SCALE, brushSize,
       )
       if (target) {
-        const candidate = { x: target.x, y: target.y, z: target.z, ...brushSize, color: '' }
-        let occupied = false
-        for (const existing of s.blocks.values()) {
-          if (blocksOverlap(candidate, existing)) {
-            occupied = true
-            break
-          }
-        }
+        // Check if all cells in brush region are already occupied
+        let allOccupied = true
+        for (let dz = 0; dz < brushSize.d && allOccupied; dz++)
+          for (let dy = 0; dy < brushSize.h && allOccupied; dy++)
+            for (let dx = 0; dx < brushSize.w && allOccupied; dx++)
+              if (!s.blocks.has(blockKey(target.x + dx, target.y + dy, target.z + dz)))
+                allOccupied = false
         renderer.updateGhostBlock(
           target, DISPLAY_SCALE, s.currentColor,
-          occupied ? 'invalid' : 'valid',
+          allOccupied ? 'invalid' : 'valid',
           brushSize,
         )
       } else {

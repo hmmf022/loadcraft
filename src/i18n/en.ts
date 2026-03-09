@@ -113,6 +113,14 @@ export const en: TranslationDict = {
     kickApplied: 'Position adjusted (wall-kick)',
     noStagedItems: 'No staged items',
   },
+  packFailure: {
+    title: 'Auto-pack failures',
+    outOfBounds: 'Does not fit in container bounds',
+    noFeasiblePosition: 'No feasible position found',
+    collision: 'Collides with placed cargo',
+    noSupport: 'Insufficient bottom support',
+    stackConstraint: 'Violates stack constraint',
+  },
   help: {
     leftDrag: 'Left drag',
     cameraRotate: 'Rotate camera',

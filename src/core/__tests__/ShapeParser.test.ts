@@ -63,14 +63,40 @@ describe('validateShapeData', () => {
   it('rejects non-object', () => {
     expect(validateShapeData('string')).toBe(false)
   })
+
+  it('accepts valid noFlip/noStack/maxStackWeightKg', () => {
+    expect(validateShapeData({ ...validShape, noFlip: true })).toBe(true)
+    expect(validateShapeData({ ...validShape, noStack: false })).toBe(true)
+    expect(validateShapeData({ ...validShape, maxStackWeightKg: 100 })).toBe(true)
+  })
+
+  it('accepts when constraint fields are omitted', () => {
+    expect(validateShapeData(validShape)).toBe(true)
+  })
+
+  it('rejects non-boolean noFlip', () => {
+    expect(validateShapeData({ ...validShape, noFlip: 'yes' })).toBe(false)
+  })
+
+  it('rejects non-boolean noStack', () => {
+    expect(validateShapeData({ ...validShape, noStack: 1 })).toBe(false)
+  })
+
+  it('rejects non-number maxStackWeightKg', () => {
+    expect(validateShapeData({ ...validShape, maxStackWeightKg: '100' })).toBe(false)
+  })
+
+  it('rejects negative maxStackWeightKg', () => {
+    expect(validateShapeData({ ...validShape, maxStackWeightKg: -5 })).toBe(false)
+  })
 })
 
 describe('shapeToCargoItemDef', () => {
-  it('computes correct bounding box', () => {
+  it('computes correct bounding box with gridSize=1', () => {
     const shape = {
       version: 1 as const,
       name: 'L Shape',
-      gridSize: 10,
+      gridSize: 1,
       blocks: [
         { x: 0, y: 0, z: 0, w: 20, h: 10, d: 10, color: '#ff0000' },
         { x: 0, y: 10, z: 0, w: 10, h: 10, d: 10, color: '#00ff00' },
@@ -87,11 +113,86 @@ describe('shapeToCargoItemDef', () => {
     expect(def.id).toBeTruthy()
   })
 
+  it('scales blocks by gridSize', () => {
+    const shape = {
+      version: 1 as const,
+      name: 'Scaled',
+      gridSize: 5,
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 2, h: 3, d: 4, color: '#ff0000' },
+      ],
+      weightKg: 10,
+    }
+    const def = shapeToCargoItemDef(shape)
+    expect(def.widthCm).toBe(10)
+    expect(def.heightCm).toBe(15)
+    expect(def.depthCm).toBe(20)
+    expect(def.blocks).toEqual([
+      { x: 0, y: 0, z: 0, w: 10, h: 15, d: 20, color: '#ff0000' },
+    ])
+  })
+
+  it('scales block positions by gridSize', () => {
+    const shape = {
+      version: 1 as const,
+      name: 'L Shape',
+      gridSize: 10,
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 2, h: 1, d: 1, color: '#ff0000' },
+        { x: 0, y: 1, z: 0, w: 1, h: 1, d: 1, color: '#00ff00' },
+      ],
+      weightKg: 15,
+    }
+    const def = shapeToCargoItemDef(shape)
+    expect(def.widthCm).toBe(20)
+    expect(def.heightCm).toBe(20)
+    expect(def.depthCm).toBe(10)
+    expect(def.blocks).toEqual([
+      { x: 0, y: 0, z: 0, w: 20, h: 10, d: 10, color: '#ff0000' },
+      { x: 0, y: 10, z: 0, w: 10, h: 10, d: 10, color: '#00ff00' },
+    ])
+  })
+
+  it('propagates constraint fields from ShapeData', () => {
+    const shape = {
+      version: 1 as const,
+      name: 'Constrained',
+      gridSize: 1,
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 10, h: 10, d: 10, color: '#ff0000' },
+      ],
+      weightKg: 5,
+      noFlip: true,
+      noStack: true,
+      maxStackWeightKg: 50,
+    }
+    const def = shapeToCargoItemDef(shape)
+    expect(def.noFlip).toBe(true)
+    expect(def.noStack).toBe(true)
+    expect(def.maxStackWeightKg).toBe(50)
+  })
+
+  it('omits constraint fields when not in ShapeData', () => {
+    const shape = {
+      version: 1 as const,
+      name: 'No Constraints',
+      gridSize: 1,
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 10, h: 10, d: 10, color: '#ff0000' },
+      ],
+      weightKg: 5,
+    }
+    const def = shapeToCargoItemDef(shape)
+    expect(def.noFlip).toBeUndefined()
+    expect(def.noStack).toBeUndefined()
+    expect(def.maxStackWeightKg).toBeUndefined()
+  })
+
   it('uses first block color', () => {
     const shape = {
       version: 1 as const,
       name: 'Test',
-      gridSize: 10,
+      gridSize: 1,
       blocks: [
         { x: 0, y: 0, z: 0, w: 10, h: 10, d: 10, color: '#aabbcc' },
       ],

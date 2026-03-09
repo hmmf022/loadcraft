@@ -1,38 +1,74 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { z } from 'zod'
 import type { SimulatorSession } from '../session.js'
 
 export function registerCargoTools(server: McpServer, session: SimulatorSession): void {
   server.tool(
     'add_cargo_def',
-    'Define a new cargo type with dimensions (cm), weight (kg), and color',
+    'Define a new cargo type. For simple boxes, provide widthCm/heightCm/depthCm. For composite shapes, provide blocks (array of {x,y,z,w,h,d,color}) and dimensions are auto-computed from AABB.',
     {
       name: z.string().describe('Name of the cargo item'),
-      widthCm: z.number().positive().describe('Width in cm'),
-      heightCm: z.number().positive().describe('Height in cm'),
-      depthCm: z.number().positive().describe('Depth in cm'),
+      widthCm: z.number().positive().optional().describe('Width in cm (required for simple boxes, auto-computed if blocks given)'),
+      heightCm: z.number().positive().optional().describe('Height in cm (required for simple boxes, auto-computed if blocks given)'),
+      depthCm: z.number().positive().optional().describe('Depth in cm (required for simple boxes, auto-computed if blocks given)'),
       weightKg: z.number().positive().describe('Weight in kg'),
       color: z.string().default('#4a90d9').describe('Color as hex string (e.g. "#FF0000")'),
+      blocks: z.array(z.object({
+        x: z.number().min(0),
+        y: z.number().min(0),
+        z: z.number().min(0),
+        w: z.number().positive(),
+        h: z.number().positive(),
+        d: z.number().positive(),
+        color: z.string(),
+      })).optional().describe('Composite shape blocks (overrides dimensions with AABB)'),
       noFlip: z.boolean().optional().describe('Keep Y-axis upright (only Y-axis rotations)'),
       noStack: z.boolean().optional().describe('No stacking allowed on top'),
       maxStackWeightKg: z.number().optional().describe('Max weight allowed on top (kg)'),
     },
     async (args) => {
+      let widthCm = args.widthCm
+      let heightCm = args.heightCm
+      let depthCm = args.depthCm
+
+      if (args.blocks && args.blocks.length > 0) {
+        // Auto-compute AABB from blocks
+        let maxX = 0, maxY = 0, maxZ = 0
+        for (const b of args.blocks) {
+          maxX = Math.max(maxX, b.x + b.w)
+          maxY = Math.max(maxY, b.y + b.h)
+          maxZ = Math.max(maxZ, b.z + b.d)
+        }
+        widthCm = widthCm ?? maxX
+        heightCm = heightCm ?? maxY
+        depthCm = depthCm ?? maxZ
+      }
+
+      if (!widthCm || !heightCm || !depthCm) {
+        return {
+          content: [{ type: 'text' as const, text: 'widthCm, heightCm, and depthCm are required when blocks are not provided' }],
+          isError: true,
+        }
+      }
+
       const id = crypto.randomUUID()
       session.addCargoDef({
         id,
         name: args.name,
-        widthCm: args.widthCm,
-        heightCm: args.heightCm,
-        depthCm: args.depthCm,
+        widthCm,
+        heightCm,
+        depthCm,
         weightKg: args.weightKg,
         color: args.color,
+        ...(args.blocks && { blocks: args.blocks }),
         ...(args.noFlip !== undefined && { noFlip: args.noFlip }),
         ...(args.noStack !== undefined && { noStack: args.noStack }),
         ...(args.maxStackWeightKg !== undefined && { maxStackWeightKg: args.maxStackWeightKg }),
       })
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ success: true, id, name: args.name }, null, 2) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true, id, name: args.name, hasBlocks: !!args.blocks }, null, 2) }],
       }
     },
   )
@@ -158,7 +194,7 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
 
   server.tool(
     'import_cargo',
-    'Import cargo definitions from CSV or JSON string',
+    'Import cargo definitions from CSV or JSON string. Also accepts ShapeData JSON (output of loadcraft-editor export_shape) when format is "json" — it will be auto-detected and converted to a composite cargo definition.',
     {
       content: z.string().describe('CSV or JSON string with cargo definitions'),
       format: z.enum(['csv', 'json']).describe('Format of the content'),
@@ -172,6 +208,61 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
           imported,
           errors: result.errors,
         }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'import_shape',
+    'Import a voxel shape (ShapeData JSON) as a composite cargo definition. Accepts the output of the loadcraft-editor\'s export_shape tool. Provide exactly one of json or filePath.',
+    {
+      json: z.string().optional().describe('ShapeData JSON string (from loadcraft-editor export_shape)'),
+      filePath: z.string().optional().describe('File path to a .shape.json file'),
+      noFlip: z.boolean().optional().describe('Keep Y-axis upright (only Y-axis rotations)'),
+      noStack: z.boolean().optional().describe('No stacking allowed on top'),
+      maxStackWeightKg: z.number().optional().describe('Max weight allowed on top (kg)'),
+    },
+    async (args) => {
+      if (args.json && args.filePath) {
+        return {
+          content: [{ type: 'text' as const, text: 'Provide either json or filePath, not both.' }],
+          isError: true,
+        }
+      }
+      if (!args.json && !args.filePath) {
+        return {
+          content: [{ type: 'text' as const, text: 'Provide either json or filePath.' }],
+          isError: true,
+        }
+      }
+
+      let jsonStr: string
+      if (args.filePath) {
+        const absPath = resolve(args.filePath)
+        try {
+          jsonStr = await readFile(absPath, 'utf-8')
+        } catch (e) {
+          return {
+            content: [{ type: 'text' as const, text: `Failed to read file: ${e instanceof Error ? e.message : String(e)}` }],
+            isError: true,
+          }
+        }
+      } else {
+        jsonStr = args.json!
+      }
+
+      const overrides = {
+        ...(args.noFlip !== undefined && { noFlip: args.noFlip }),
+        ...(args.noStack !== undefined && { noStack: args.noStack }),
+        ...(args.maxStackWeightKg !== undefined && { maxStackWeightKg: args.maxStackWeightKg }),
+      }
+
+      const result = session.importShape(jsonStr, Object.keys(overrides).length > 0 ? overrides : undefined)
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true, id: result.id, name: result.name }, null, 2) }],
       }
     },
   )

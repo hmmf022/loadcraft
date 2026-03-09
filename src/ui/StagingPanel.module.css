@@ -121,3 +121,43 @@
   color: #fff;
   border-color: var(--danger);
 }
+
+.failurePanel {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  padding: 8px;
+}
+
+.failureTitle {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+.failureList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failureItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.failureName {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failureReason {
+  color: var(--danger);
+  text-align: right;
+}

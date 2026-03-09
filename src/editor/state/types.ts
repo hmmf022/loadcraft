@@ -42,9 +42,7 @@ export type EditorAction =
   | { type: 'REDO' }
   | { type: 'RESTORE'; blocks: Map<string, EditorBlock> }
 
-export function blockKey(x: number, y: number, z: number): string {
-  return `${x},${y},${z}`
-}
+export { blockKey } from '../../core/types'
 
 /** Check if two axis-aligned blocks overlap */
 export function blocksOverlap(a: EditorBlock, b: EditorBlock): boolean {
@@ -63,8 +61,8 @@ export const initialEditorState: EditorState = {
   currentColor: '#4a90d9',
   shapeName: 'New Shape',
   weightKg: 10,
-  brushW: 10,
-  brushH: 10,
-  brushD: 10,
+  brushW: 1,
+  brushH: 1,
+  brushD: 1,
   ghostPosition: null,
 }

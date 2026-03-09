@@ -1,5 +1,6 @@
 import { useAppStore } from '../state/store'
 import { useTranslation } from '../i18n'
+import type { PackFailureCode } from '../core/AutoPacker'
 import styles from './StagingPanel.module.css'
 
 export function StagingPanel() {
@@ -9,8 +10,17 @@ export function StagingPanel() {
   const stageCargo = useAppStore((s) => s.stageCargo)
   const clearStaged = useAppStore((s) => s.clearStaged)
   const autoPackCargo = useAppStore((s) => s.autoPackCargo)
+  const autoPackFailures = useAppStore((s) => s.autoPackFailures)
   const placements = useAppStore((s) => s.placements)
   const { t } = useTranslation()
+
+  const getFailureLabel = (code: PackFailureCode): string => {
+    if (code === 'OUT_OF_BOUNDS') return t.packFailure.outOfBounds
+    if (code === 'NO_FEASIBLE_POSITION') return t.packFailure.noFeasiblePosition
+    if (code === 'COLLISION') return t.packFailure.collision
+    if (code === 'NO_SUPPORT') return t.packFailure.noSupport
+    return t.packFailure.stackConstraint
+  }
 
   const handleRepackAll = () => {
     if (placements.length > 0 && !confirm(t.staging.confirmRepack)) return
@@ -89,6 +99,19 @@ export function StagingPanel() {
           </button>
         )}
       </div>
+      {autoPackFailures.length > 0 && (
+        <div className={styles.failurePanel}>
+          <div className={styles.failureTitle}>{t.packFailure.title}</div>
+          <div className={styles.failureList}>
+            {autoPackFailures.slice(0, 6).map((item, idx) => (
+              <div key={`${item.cargoDefId}:${idx}`} className={styles.failureItem}>
+                <span className={styles.failureName}>{item.cargoName}</span>
+                <span className={styles.failureReason}>{getFailureLabel(item.code)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { CONTAINER_PRESETS } from '../core/types.js'
 import { VoxelGrid } from '../core/VoxelGrid.js'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History.js'
 import { autoPack } from '../core/AutoPacker.js'
+import type { PackFailureReason } from '../core/AutoPacker.js'
 import { checkInterference } from '../core/InterferenceChecker.js'
 import type { InterferencePair } from '../core/InterferenceChecker.js'
 import { checkStackConstraints } from '../core/StackChecker.js'
@@ -17,6 +18,7 @@ import { serializeSaveData, validateSaveData } from '../core/SaveLoad.js'
 import type { SaveData } from '../core/SaveLoad.js'
 import { OccupancyMap } from '../core/OccupancyMap.js'
 import { parseCargoCSV, parseCargoJSON } from '../core/ImportParser.js'
+import { validateShapeData, shapeToCargoItemDef } from '../core/ShapeParser.js'
 import { tryKick } from '../core/WallKick.js'
 
 export class SimulatorSession {
@@ -108,6 +110,34 @@ export class SimulatorSession {
     return result
   }
 
+  importShape(
+    jsonStr: string,
+    overrides?: { noFlip?: boolean; noStack?: boolean; maxStackWeightKg?: number },
+  ): { success: boolean; id?: string; name?: string; error?: string } {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      return { success: false, error: 'Invalid JSON' }
+    }
+
+    if (!validateShapeData(parsed)) {
+      return { success: false, error: 'Invalid ShapeData format (requires version=1, name, gridSize, blocks, weightKg)' }
+    }
+
+    if (parsed.blocks.length === 0) {
+      return { success: false, error: 'ShapeData has no blocks' }
+    }
+
+    const def = shapeToCargoItemDef(parsed)
+    if (overrides?.noFlip !== undefined) def.noFlip = overrides.noFlip
+    if (overrides?.noStack !== undefined) def.noStack = overrides.noStack
+    if (overrides?.maxStackWeightKg !== undefined) def.maxStackWeightKg = overrides.maxStackWeightKg
+
+    this.cargoDefs.push(def)
+    return { success: true, id: def.id, name: def.name }
+  }
+
   // --- Staging ---
 
   stageCargo(cargoDefId: string, count: number = 1): { success: boolean; error?: string } {
@@ -142,6 +172,7 @@ export class SimulatorSession {
     cargoDefId: string,
     position: Vec3,
     rotation?: Vec3,
+    force?: boolean,
   ): { success: boolean; instanceId?: number; error?: string } {
     const def = this.cargoDefs.find((d) => d.id === cargoDefId)
     if (!def) return { success: false, error: 'Cargo definition not found' }
@@ -159,7 +190,7 @@ export class SimulatorSession {
       return { success: false, error: 'Placement out of container bounds' }
     }
 
-    if (checkCollision(this.grid, result, instanceId)) {
+    if (!force && checkCollision(this.grid, result, instanceId)) {
       return { success: false, error: 'Collision with existing cargo' }
     }
 
@@ -232,6 +263,16 @@ export class SimulatorSession {
 
     const def = this.cargoDefs.find((d) => d.id === placement.cargoDefId)
     if (!def) return { success: false, error: 'Cargo definition not found' }
+
+    // noFlip check: reject X/Z axis rotation
+    if (def.noFlip) {
+      const oldRot = placement.rotationDeg
+      const xChanged = ((newRotation.x % 360) + 360) % 360 !== ((oldRot.x % 360) + 360) % 360
+      const zChanged = ((newRotation.z % 360) + 360) % 360 !== ((oldRot.z % 360) + 360) % 360
+      if (xChanged || zChanged) {
+        return { success: false, error: 'noFlip cargo cannot be rotated on X/Z axes' }
+      }
+    }
 
     const pos = placement.positionCm
     const oldRot = placement.rotationDeg
@@ -322,7 +363,7 @@ export class SimulatorSession {
     return { success: true, newY: bestY }
   }
 
-  autoPackCargo(mode: AutoPackMode = 'packStaged'): { success: boolean; placed: number; failed: number; error?: string } {
+  autoPackCargo(mode: AutoPackMode = 'packStaged'): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
     if (mode === 'repack') {
       const allItems: CargoItemDef[] = []
       for (const p of this.placements) {
@@ -337,7 +378,7 @@ export class SimulatorSession {
       }
 
       if (allItems.length === 0) {
-        return { success: false, placed: 0, failed: 0, error: 'No items to repack' }
+        return { success: false, placed: 0, failed: 0, failureReasons: [], error: 'No items to repack' }
       }
 
       const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
@@ -350,7 +391,13 @@ export class SimulatorSession {
       const result = autoPack(allItems, this.container, this.nextInstanceId)
 
       if (result.placements.length === 0) {
-        return { success: false, placed: 0, failed: allItems.length, error: 'No items could be placed' }
+        return {
+          success: false,
+          placed: 0,
+          failed: allItems.length,
+          failureReasons: result.failureReasons,
+          error: 'No items could be placed',
+        }
       }
 
       const addedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
@@ -368,11 +415,16 @@ export class SimulatorSession {
       this.nextInstanceId = maxInstanceId + 1
       this.stagedItems = []
 
-      return { success: true, placed: result.placements.length, failed: result.failedDefIds.length }
+      return {
+        success: true,
+        placed: result.placements.length,
+        failed: result.failedDefIds.length,
+        failureReasons: result.failureReasons,
+      }
     } else {
       // packStaged
       if (this.stagedItems.length === 0) {
-        return { success: false, placed: 0, failed: 0, error: 'No staged items' }
+        return { success: false, placed: 0, failed: 0, failureReasons: [], error: 'No staged items' }
       }
 
       const items: CargoItemDef[] = []
@@ -384,14 +436,23 @@ export class SimulatorSession {
       }
 
       if (items.length === 0) {
-        return { success: false, placed: 0, failed: 0, error: 'No staged items' }
+        return { success: false, placed: 0, failed: 0, failureReasons: [], error: 'No staged items' }
       }
 
       const occMap = OccupancyMap.fromPlacements(this.placements, this.cargoDefs, this.container)
-      const result = autoPack(items, this.container, this.nextInstanceId, occMap)
+      const result = autoPack(items, this.container, this.nextInstanceId, occMap, {
+        existingPlacements: this.placements,
+        existingCargoDefs: this.cargoDefs,
+      })
 
       if (result.placements.length === 0) {
-        return { success: false, placed: 0, failed: items.length, error: 'No items could be placed' }
+        return {
+          success: false,
+          placed: 0,
+          failed: items.length,
+          failureReasons: result.failureReasons,
+          error: 'No items could be placed',
+        }
       }
 
       const commands: PlaceCommand[] = []
@@ -421,7 +482,12 @@ export class SimulatorSession {
         .map((si) => ({ ...si, count: si.count - (placedCountByDef.get(si.cargoDefId) ?? 0) }))
         .filter((si) => si.count > 0)
 
-      return { success: true, placed: result.placements.length, failed: result.failedDefIds.length }
+      return {
+        success: true,
+        placed: result.placements.length,
+        failed: result.failedDefIds.length,
+        failureReasons: result.failureReasons,
+      }
     }
   }
 

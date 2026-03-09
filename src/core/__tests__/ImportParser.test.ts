@@ -162,6 +162,30 @@ describe('parseCargoJSON', () => {
     expect(result.defs[0]!.noStack).toBeUndefined()
     expect(result.defs[0]!.noFlip).toBeUndefined()
   })
+
+  it('parses ShapeData JSON (version=1) as composite cargo', () => {
+    const shapeData = {
+      version: 1,
+      name: 'L-Shape',
+      gridSize: 1,
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 30, h: 20, d: 10, color: '#ff0000' },
+        { x: 0, y: 0, z: 10, w: 10, h: 20, d: 10, color: '#00ff00' },
+      ],
+      weightKg: 50,
+    }
+
+    const result = parseCargoJSON(JSON.stringify(shapeData))
+    expect(result.errors).toHaveLength(0)
+    expect(result.defs).toHaveLength(1)
+    const def = result.defs[0]!
+    expect(def.name).toBe('L-Shape')
+    expect(def.weightKg).toBe(50)
+    expect(def.blocks).toHaveLength(2)
+    expect(def.widthCm).toBe(30)
+    expect(def.heightCm).toBe(20)
+    expect(def.depthCm).toBe(20)
+  })
 })
 
 describe('parseCargoFile', () => {

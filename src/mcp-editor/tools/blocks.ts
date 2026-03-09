@@ -5,25 +5,22 @@ import type { EditorSession } from '../session.js'
 export function registerBlockTools(server: McpServer, session: EditorSession): void {
   server.tool(
     'place_block',
-    'Place a block at the given position. Dimensions default to 1. Color defaults to currentColor.',
+    'Place a 1×1×1 block at the given position. For region placement, use fill_region.',
     {
       x: z.number().int().min(0).describe('X position (cells)'),
       y: z.number().int().min(0).describe('Y position (cells)'),
       z: z.number().int().min(0).describe('Z position (cells)'),
-      w: z.number().int().min(1).default(1).describe('Width (cells, default 1)'),
-      h: z.number().int().min(1).default(1).describe('Height (cells, default 1)'),
-      d: z.number().int().min(1).default(1).describe('Depth (cells, default 1)'),
       color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe('Block color (#RRGGBB). Defaults to currentColor.'),
     },
     async (args) => {
-      const result = session.placeBlock(args.x, args.y, args.z, args.w, args.h, args.d, args.color)
+      const result = session.placeBlock(args.x, args.y, args.z, args.color)
       if (!result.success) {
         return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
           success: true,
-          block: { x: args.x, y: args.y, z: args.z, w: args.w, h: args.h, d: args.d },
+          block: { x: args.x, y: args.y, z: args.z, w: 1, h: 1, d: 1 },
           blockCount: session.state.blocks.size,
         }, null, 2) }],
       }
