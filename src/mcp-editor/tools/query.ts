@@ -38,9 +38,9 @@ export function registerQueryTools(server: McpServer, session: EditorSession): v
     'find_block_at',
     'Find which block contains the given coordinate. Returns the block origin, size, and color.',
     {
-      x: z.number().int().describe('X coordinate to search'),
-      y: z.number().int().describe('Y coordinate to search'),
-      z: z.number().int().describe('Z coordinate to search'),
+      x: z.number().int().min(0).describe('X coordinate to search'),
+      y: z.number().int().min(0).describe('Y coordinate to search'),
+      z: z.number().int().min(0).describe('Z coordinate to search'),
     },
     async (args) => {
       const block = session.findBlockAt(args.x, args.y, args.z)

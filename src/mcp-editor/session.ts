@@ -2,7 +2,7 @@ import type { EditorState, EditorBlock } from '../editor/state/types.js'
 import { initialEditorState, blockKey } from '../editor/state/types.js'
 import { editorReducer } from '../editor/state/editorReducer.js'
 import { EditorHistory } from '../editor/state/history.js'
-import { validateShapeData } from '../core/ShapeParser.js'
+import { parseShapeData } from '../core/ShapeParser.js'
 import type { ShapeData } from '../core/ShapeParser.js'
 import { compressBlocks, expandBlocks } from '../core/ShapeCompressor.js'
 
@@ -188,11 +188,12 @@ export class EditorSession {
       return { success: false, error: 'Invalid JSON' }
     }
 
-    if (!validateShapeData(parsed)) {
-      return { success: false, error: 'Invalid ShapeData format' }
+    const shape = parseShapeData(parsed)
+    if (!shape.ok) {
+      return { success: false, error: shape.error }
     }
 
-    const data = parsed as ShapeData
+    const data = shape.data
 
     const cells = expandBlocks(data.blocks, data.gridSize)
 

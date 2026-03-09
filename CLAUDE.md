@@ -105,7 +105,7 @@ src/editor/
 interface ShapeData {
   version: 1
   name: string
-  gridSize: number   // 1 | 5 | 10 cm/セル
+  gridSize: 1        // MCPでは常に1cm/セル固定
   blocks: ShapeBlock[]  // 圧縮済み矩形ブロック
   weightKg: number
 }
@@ -121,6 +121,7 @@ interface ShapeBlock {  // src/core/types.ts
 
 - **ShapeCompressor** (`src/core/ShapeCompressor.ts`): ボクセル→矩形ブロック圧縮。色ごとにグループ化し、X→Y→Z の貪欲拡張アルゴリズムで圧縮。`compressBlocks()` / `expandBlocks()` で可逆変換
 - **ShapeParser** (`src/core/ShapeParser.ts`): `validateShapeData()` でJSONバリデーション、`shapeToCargoItemDef()` でAABB自動計算→CargoItemDef変換
+- **MCP制約**: ShapeData の `gridSize` は `1` のみ受け付け（表示倍率はUI専用でMCP非対象）
 
 ### CargoItemDef 拡張 (複合形状対応)
 

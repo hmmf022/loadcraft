@@ -194,13 +194,23 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
 
   server.tool(
     'import_cargo',
-    'Import cargo definitions from CSV or JSON string. Also accepts ShapeData JSON (output of loadcraft-editor export_shape) when format is "json" — it will be auto-detected and converted to a composite cargo definition.',
+    'Import cargo definitions from CSV or JSON string. For format="json", ShapeData is auto-detected. MCP only accepts ShapeData with gridSize=1 (1cm blocks). JSON import is atomic: any validation error fails the whole import.',
     {
       content: z.string().describe('CSV or JSON string with cargo definitions'),
       format: z.enum(['csv', 'json']).describe('Format of the content'),
     },
     async (args) => {
       const result = session.importCargo(args.content, args.format)
+      if (args.format === 'json' && result.errors.length > 0) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({
+            importedCount: 0,
+            imported: [],
+            errors: result.errors,
+          }, null, 2) }],
+          isError: true,
+        }
+      }
       const imported = result.defs.map((d) => ({ id: d.id, name: d.name }))
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
@@ -214,7 +224,7 @@ export function registerCargoTools(server: McpServer, session: SimulatorSession)
 
   server.tool(
     'import_shape',
-    'Import a voxel shape (ShapeData JSON) as a composite cargo definition. Accepts the output of the loadcraft-editor\'s export_shape tool. Provide exactly one of json or filePath.',
+    'Import a voxel shape (ShapeData JSON) as a composite cargo definition. Accepts loadcraft-editor export_shape output. MCP only supports gridSize=1 (1cm blocks). Provide exactly one of json or filePath.',
     {
       json: z.string().optional().describe('ShapeData JSON string (from loadcraft-editor export_shape)'),
       filePath: z.string().optional().describe('File path to a .shape.json file'),

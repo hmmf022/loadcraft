@@ -18,7 +18,7 @@ import { serializeSaveData, validateSaveData } from '../core/SaveLoad.js'
 import type { SaveData } from '../core/SaveLoad.js'
 import { OccupancyMap } from '../core/OccupancyMap.js'
 import { parseCargoCSV, parseCargoJSON } from '../core/ImportParser.js'
-import { validateShapeData, shapeToCargoItemDef } from '../core/ShapeParser.js'
+import { parseShapeData, shapeToCargoItemDef } from '../core/ShapeParser.js'
 import { tryKick } from '../core/WallKick.js'
 
 export class SimulatorSession {
@@ -104,6 +104,10 @@ export class SimulatorSession {
 
   importCargo(content: string, format: 'csv' | 'json'): { defs: CargoItemDef[]; errors: string[] } {
     const result = format === 'csv' ? parseCargoCSV(content) : parseCargoJSON(content)
+    // JSON import must be atomic: if there are any validation errors, do not add defs.
+    if (format === 'json' && result.errors.length > 0) {
+      return { defs: [], errors: result.errors }
+    }
     for (const def of result.defs) {
       this.cargoDefs.push(def)
     }
@@ -121,15 +125,16 @@ export class SimulatorSession {
       return { success: false, error: 'Invalid JSON' }
     }
 
-    if (!validateShapeData(parsed)) {
-      return { success: false, error: 'Invalid ShapeData format (requires version=1, name, gridSize, blocks, weightKg)' }
+    const shape = parseShapeData(parsed)
+    if (!shape.ok) {
+      return { success: false, error: shape.error }
     }
 
-    if (parsed.blocks.length === 0) {
+    if (shape.data.blocks.length === 0) {
       return { success: false, error: 'ShapeData has no blocks' }
     }
 
-    const def = shapeToCargoItemDef(parsed)
+    const def = shapeToCargoItemDef(shape.data)
     if (overrides?.noFlip !== undefined) def.noFlip = overrides.noFlip
     if (overrides?.noStack !== undefined) def.noStack = overrides.noStack
     if (overrides?.maxStackWeightKg !== undefined) def.maxStackWeightKg = overrides.maxStackWeightKg

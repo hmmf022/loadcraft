@@ -112,6 +112,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | docker run --rm -i loadc
 ファイル永続化が必要な場合は `args` に `-v ./data:/data` を追加してください。
 
 `auto_pack` MCP ツールは、配置できなかった荷物の理由コードを `failureReasons` で返します。
+MCP の ShapeData 取り込み/出力は 1cm ブロック固定（`gridSize` は `1` のみ対応）で、エディタの表示倍率は UI 専用です。
 
 ## ライセンス
 

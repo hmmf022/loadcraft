@@ -1,6 +1,6 @@
 import Papa from 'papaparse'
 import type { CargoItemDef } from './types'
-import { validateShapeData, shapeToCargoItemDef } from './ShapeParser'
+import { parseShapeData, shapeToCargoItemDef } from './ShapeParser'
 
 export interface ImportResult {
   defs: CargoItemDef[]
@@ -117,11 +117,12 @@ export function parseCargoJSON(jsonText: string): ImportResult {
 
   // Check if this is a ShapeData JSON (version === 1 && blocks array)
   if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-    if (validateShapeData(parsed)) {
-      const def = shapeToCargoItemDef(parsed)
+    const shape = parseShapeData(parsed)
+    if (shape.ok) {
+      const def = shapeToCargoItemDef(shape.data)
       return { defs: [def], errors: [] }
     }
-    return { defs, errors: ['JSON is not a valid cargo array or shape file'] }
+    return { defs, errors: [shape.error] }
   }
 
   if (!Array.isArray(parsed)) {

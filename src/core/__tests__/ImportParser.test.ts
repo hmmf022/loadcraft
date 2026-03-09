@@ -126,7 +126,7 @@ describe('parseCargoJSON', () => {
 
   it('reports error for non-array JSON', () => {
     const result = parseCargoJSON('{"name": "test"}')
-    expect(result.errors).toEqual(['JSON is not a valid cargo array or shape file'])
+    expect(result.errors).toEqual(['ShapeData version must be 1'])
   })
 
   it('reports error for items with invalid fields', () => {
@@ -185,6 +185,22 @@ describe('parseCargoJSON', () => {
     expect(def.widthCm).toBe(30)
     expect(def.heightCm).toBe(20)
     expect(def.depthCm).toBe(20)
+  })
+
+  it('rejects ShapeData JSON when gridSize is not 1', () => {
+    const shapeData = {
+      version: 1,
+      name: 'Legacy Shape',
+      gridSize: 10,
+      blocks: [
+        { x: 0, y: 0, z: 0, w: 1, h: 1, d: 1, color: '#ff0000' },
+      ],
+      weightKg: 10,
+    }
+
+    const result = parseCargoJSON(JSON.stringify(shapeData))
+    expect(result.defs).toHaveLength(0)
+    expect(result.errors).toEqual(['ShapeData gridSize must be 1 for MCP (1cm blocks only)'])
   })
 })
 

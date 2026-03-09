@@ -7,7 +7,7 @@ import type { EditorSession } from '../session.js'
 export function registerFileTools(server: McpServer, session: EditorSession): void {
   server.tool(
     'export_shape',
-    'Export the current shape as ShapeData JSON. If filePath is given, writes to that file; otherwise returns the JSON string.',
+    'Export the current shape as ShapeData JSON (gridSize is always 1cm blocks for MCP). If filePath is given, writes to that file; otherwise returns the JSON string.',
     {
       filePath: z.string().optional().describe('Optional file path to write the shape JSON to'),
     },
@@ -41,7 +41,7 @@ export function registerFileTools(server: McpServer, session: EditorSession): vo
 
   server.tool(
     'import_shape',
-    'Import a ShapeData JSON (replaces current shape). Provide exactly one of json or filePath.',
+    'Import a ShapeData JSON (replaces current shape). MCP only supports gridSize=1 (1cm blocks). Provide exactly one of json or filePath.',
     {
       json: z.string().optional().describe('ShapeData JSON string'),
       filePath: z.string().optional().describe('File path to read ShapeData from'),

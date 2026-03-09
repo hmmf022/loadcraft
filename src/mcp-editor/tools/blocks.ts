@@ -31,9 +31,9 @@ export function registerBlockTools(server: McpServer, session: EditorSession): v
     'remove_block',
     'Remove a block by its origin position. Use find_block_at to find the origin of a block at any coordinate.',
     {
-      x: z.number().int().describe('X origin of the block'),
-      y: z.number().int().describe('Y origin of the block'),
-      z: z.number().int().describe('Z origin of the block'),
+      x: z.number().int().min(0).describe('X origin of the block'),
+      y: z.number().int().min(0).describe('Y origin of the block'),
+      z: z.number().int().min(0).describe('Z origin of the block'),
     },
     async (args) => {
       const result = session.removeBlock(args.x, args.y, args.z)
@@ -53,9 +53,9 @@ export function registerBlockTools(server: McpServer, session: EditorSession): v
     'paint_block',
     'Recolor a block at its origin position.',
     {
-      x: z.number().int().describe('X origin of the block'),
-      y: z.number().int().describe('Y origin of the block'),
-      z: z.number().int().describe('Z origin of the block'),
+      x: z.number().int().min(0).describe('X origin of the block'),
+      y: z.number().int().min(0).describe('Y origin of the block'),
+      z: z.number().int().min(0).describe('Z origin of the block'),
       color: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe('New color (#RRGGBB)'),
     },
     async (args) => {

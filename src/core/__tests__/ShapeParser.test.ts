@@ -5,7 +5,7 @@ describe('validateShapeData', () => {
   const validShape = {
     version: 1,
     name: 'Test Shape',
-    gridSize: 10,
+    gridSize: 1,
     blocks: [
       { x: 0, y: 0, z: 0, w: 10, h: 10, d: 10, color: '#ff0000' },
     ],
@@ -28,10 +28,10 @@ describe('validateShapeData', () => {
     expect(validateShapeData({ ...validShape, gridSize: 7 })).toBe(false)
   })
 
-  it('accepts gridSize 1, 5, 10', () => {
+  it('accepts only gridSize 1', () => {
     expect(validateShapeData({ ...validShape, gridSize: 1 })).toBe(true)
-    expect(validateShapeData({ ...validShape, gridSize: 5 })).toBe(true)
-    expect(validateShapeData({ ...validShape, gridSize: 10 })).toBe(true)
+    expect(validateShapeData({ ...validShape, gridSize: 5 })).toBe(false)
+    expect(validateShapeData({ ...validShape, gridSize: 10 })).toBe(false)
   })
 
   it('rejects negative weightKg', () => {
@@ -96,7 +96,7 @@ describe('shapeToCargoItemDef', () => {
     const shape = {
       version: 1 as const,
       name: 'L Shape',
-      gridSize: 1,
+      gridSize: 1 as const,
       blocks: [
         { x: 0, y: 0, z: 0, w: 20, h: 10, d: 10, color: '#ff0000' },
         { x: 0, y: 10, z: 0, w: 10, h: 10, d: 10, color: '#00ff00' },
@@ -113,51 +113,11 @@ describe('shapeToCargoItemDef', () => {
     expect(def.id).toBeTruthy()
   })
 
-  it('scales blocks by gridSize', () => {
-    const shape = {
-      version: 1 as const,
-      name: 'Scaled',
-      gridSize: 5,
-      blocks: [
-        { x: 0, y: 0, z: 0, w: 2, h: 3, d: 4, color: '#ff0000' },
-      ],
-      weightKg: 10,
-    }
-    const def = shapeToCargoItemDef(shape)
-    expect(def.widthCm).toBe(10)
-    expect(def.heightCm).toBe(15)
-    expect(def.depthCm).toBe(20)
-    expect(def.blocks).toEqual([
-      { x: 0, y: 0, z: 0, w: 10, h: 15, d: 20, color: '#ff0000' },
-    ])
-  })
-
-  it('scales block positions by gridSize', () => {
-    const shape = {
-      version: 1 as const,
-      name: 'L Shape',
-      gridSize: 10,
-      blocks: [
-        { x: 0, y: 0, z: 0, w: 2, h: 1, d: 1, color: '#ff0000' },
-        { x: 0, y: 1, z: 0, w: 1, h: 1, d: 1, color: '#00ff00' },
-      ],
-      weightKg: 15,
-    }
-    const def = shapeToCargoItemDef(shape)
-    expect(def.widthCm).toBe(20)
-    expect(def.heightCm).toBe(20)
-    expect(def.depthCm).toBe(10)
-    expect(def.blocks).toEqual([
-      { x: 0, y: 0, z: 0, w: 20, h: 10, d: 10, color: '#ff0000' },
-      { x: 0, y: 10, z: 0, w: 10, h: 10, d: 10, color: '#00ff00' },
-    ])
-  })
-
   it('propagates constraint fields from ShapeData', () => {
     const shape = {
       version: 1 as const,
       name: 'Constrained',
-      gridSize: 1,
+      gridSize: 1 as const,
       blocks: [
         { x: 0, y: 0, z: 0, w: 10, h: 10, d: 10, color: '#ff0000' },
       ],
@@ -176,7 +136,7 @@ describe('shapeToCargoItemDef', () => {
     const shape = {
       version: 1 as const,
       name: 'No Constraints',
-      gridSize: 1,
+      gridSize: 1 as const,
       blocks: [
         { x: 0, y: 0, z: 0, w: 10, h: 10, d: 10, color: '#ff0000' },
       ],
@@ -192,7 +152,7 @@ describe('shapeToCargoItemDef', () => {
     const shape = {
       version: 1 as const,
       name: 'Test',
-      gridSize: 1,
+      gridSize: 1 as const,
       blocks: [
         { x: 0, y: 0, z: 0, w: 10, h: 10, d: 10, color: '#aabbcc' },
       ],

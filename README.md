@@ -112,6 +112,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | docker run --rm -i loadc
 Add `-v ./data:/data` to `args` for file persistence (save/load).
 
 `auto_pack` MCP tool responses include `failureReasons` with reason codes for unplaced items.
+MCP shape import/export uses fixed 1cm blocks (`gridSize` must be `1`); editor display scaling is UI-only and not part of MCP data.
 
 ## License
 
