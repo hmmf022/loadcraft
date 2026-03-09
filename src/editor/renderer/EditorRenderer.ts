@@ -3,6 +3,7 @@ import { EditorCameraController } from './EditorCameraController'
 import { ViewTransition } from '../../renderer/ViewTransition'
 import { createCargoPipeline, createGhostPipeline, INSTANCE_BYTE_SIZE } from '../../renderer/pipelines/CargoPipeline'
 import { createGridPipeline } from '../../renderer/pipelines/GridPipeline'
+import { createAxisPipeline } from '../../renderer/pipelines/AxisPipeline'
 import { mat4Translation, mat4Scaling, mat4Multiply } from '../../utils/math'
 import type { EditorBlock } from '../state/types'
 
@@ -49,6 +50,11 @@ export class EditorRenderer {
   private gridVertexBuffer!: GPUBuffer
   private gridIndexBuffer!: GPUBuffer
   private gridIndexCount = 0
+
+  // Axis pipeline
+  private axisPipeline!: GPURenderPipeline
+  private axisVertexBuffer!: GPUBuffer
+  private axisVertexCount = 0
 
   private viewTransition: ViewTransition
 
@@ -149,11 +155,17 @@ export class EditorRenderer {
     this.ghostPipeline = ghost.pipeline
 
     // Grid pipeline
-    const grid = createGridPipeline(this.device, this.format, this.cameraBindGroupLayout)
+    const grid = createGridPipeline(this.device, this.format, this.cameraBindGroupLayout, { positiveOnly: true })
     this.gridPipeline = grid.pipeline
     this.gridVertexBuffer = grid.vertexBuffer
     this.gridIndexBuffer = grid.indexBuffer
     this.gridIndexCount = grid.indexCount
+
+    // Axis pipeline
+    const axis = createAxisPipeline(this.device, this.format, this.cameraBindGroupLayout)
+    this.axisPipeline = axis.pipeline
+    this.axisVertexBuffer = axis.vertexBuffer
+    this.axisVertexCount = axis.vertexCount
   }
 
   updateBlocks(blocks: Map<string, EditorBlock>, gridSize: number): void {
@@ -341,6 +353,25 @@ export class EditorRenderer {
     pass3.drawIndexed(this.gridIndexCount)
     pass3.end()
 
+    // Pass 3: Axis indicators (RGB lines from origin)
+    const axisPass = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: textureView,
+        loadOp: 'load',
+        storeOp: 'store',
+      }],
+      depthStencilAttachment: {
+        view: depthView,
+        depthLoadOp: 'load',
+        depthStoreOp: 'store',
+      },
+    })
+    axisPass.setPipeline(this.axisPipeline)
+    axisPass.setBindGroup(0, this.cameraBindGroup)
+    axisPass.setVertexBuffer(0, this.axisVertexBuffer)
+    axisPass.draw(this.axisVertexCount)
+    axisPass.end()
+
     this.device.queue.submit([commandEncoder.finish()])
 
     this.animationId = requestAnimationFrame(this.render)
@@ -370,6 +401,7 @@ export class EditorRenderer {
     this.ghostBuffer?.destroy()
     this.gridVertexBuffer?.destroy()
     this.gridIndexBuffer?.destroy()
+    this.axisVertexBuffer?.destroy()
     this.depthTexture?.destroy()
     this.device?.destroy()
   }
