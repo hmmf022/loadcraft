@@ -102,6 +102,61 @@ export class OccupancyMap {
     return bestPos
   }
 
+  /** Find multiple feasible candidate positions (ordered by X asc, then Y asc, then Z asc). */
+  findCandidatePositions(w: number, h: number, d: number, maxCandidates = 12): Vec3[] {
+    const cs = this.cellSize
+    const itemCellsW = Math.ceil(w / cs)
+    const itemCellsD = Math.ceil(d / cs)
+    const candidates: Vec3[] = []
+
+    for (let cx = 0; cx <= this.cellsX - itemCellsW; cx++) {
+      for (let cz = 0; cz <= this.cellsZ - itemCellsD; cz++) {
+        let maxH = 0
+        for (let dx = 0; dx < itemCellsW; dx++) {
+          for (let dz = 0; dz < itemCellsD; dz++) {
+            const val = this.heightMap[(cx + dx) + this.cellsX * (cz + dz)]!
+            if (val > maxH) maxH = val
+          }
+        }
+
+        const xPos = cx * cs
+        const zPos = cz * cs
+        if (maxH + h > this.containerH) continue
+        if (xPos + w > this.containerW || zPos + d > this.containerD) continue
+
+        candidates.push({ x: xPos, y: maxH, z: zPos })
+        if (candidates.length >= maxCandidates) return candidates
+      }
+    }
+
+    return candidates
+  }
+
+  /** Estimate bottom support ratio using the current height map (0.0 - 1.0). */
+  getSupportRatio(x: number, z: number, w: number, d: number, baseY: number): number {
+    if (baseY <= 0) return 1
+
+    const cs = this.cellSize
+    const minCX = Math.max(0, Math.floor(x / cs))
+    const maxCX = Math.min(this.cellsX - 1, Math.ceil((x + w) / cs) - 1)
+    const minCZ = Math.max(0, Math.floor(z / cs))
+    const maxCZ = Math.min(this.cellsZ - 1, Math.ceil((z + d) / cs) - 1)
+
+    let total = 0
+    let supported = 0
+
+    for (let cz = minCZ; cz <= maxCZ; cz++) {
+      for (let cx = minCX; cx <= maxCX; cx++) {
+        total++
+        if (this.heightMap[cx + this.cellsX * cz]! === baseY) {
+          supported++
+        }
+      }
+    }
+
+    return total === 0 ? 0 : supported / total
+  }
+
   clone(): OccupancyMap {
     const copy = new OccupancyMap(this.containerW, this.containerH, this.containerD, this.cellSize)
     copy.heightMap.set(this.heightMap)

@@ -173,13 +173,26 @@ export function registerPlacementTools(server: McpServer, session: SimulatorSess
       const mode = args.mode === 'repack' ? 'repack' : 'packStaged'
       const result = session.autoPackCargo(mode)
       if (!result.success) {
-        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: false,
+              error: result.error,
+              placed: result.placed,
+              failed: result.failed,
+              failureReasons: result.failureReasons,
+            }, null, 2),
+          }],
+          isError: true,
+        }
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({
           success: true,
           placed: result.placed,
           failed: result.failed,
+          failureReasons: result.failureReasons,
         }, null, 2) }],
       }
     },

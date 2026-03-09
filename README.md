@@ -16,6 +16,7 @@ Container loading simulator with WebGPU 3D visualization.
 - **Grid snap** — 1 / 5 / 10 cm snap options
 - **Responsive layout** — Desktop sidebar + mobile hamburger menu
 - **Voxel Shape Editor** — Minecraft-style block editor for composite cargo shapes
+- **Auto-pack failure reasons** — UI and MCP return detailed reason codes for unplaceable items
 
 ## Requirements
 
@@ -109,6 +110,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | docker run --rm -i loadc
 ```
 
 Add `-v ./data:/data` to `args` for file persistence (save/load).
+
+`auto_pack` MCP tool responses include `failureReasons` with reason codes for unplaced items.
 
 ## License
 

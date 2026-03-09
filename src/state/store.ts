@@ -4,6 +4,7 @@ import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History'
 import { autoPack } from '../core/AutoPacker'
+import type { PackFailureReason } from '../core/AutoPacker'
 import { OccupancyMap } from '../core/OccupancyMap'
 import { checkInterference } from '../core/InterferenceChecker'
 import type { InterferencePair } from '../core/InterferenceChecker'
@@ -56,6 +57,7 @@ export interface AppState {
 
   // Staging
   stagedItems: StagedItem[]
+  autoPackFailures: PackFailureReason[]
   stageCargo: (cargoDefId: string, count?: number) => void
   unstageCargo: (cargoDefId: string, count?: number) => void
   clearStaged: () => void
@@ -175,6 +177,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       cogDeviation: null,
       supportResults: new Map(),
       stackViolations: [],
+      autoPackFailures: [],
     }))
   },
 
@@ -495,6 +498,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       if (allItems.length === 0) {
+        set({ autoPackFailures: [] })
         state.addToast(tt.toasts.noCargoForPack, 'error')
         return
       }
@@ -510,6 +514,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = autoPack(allItems, state.container, state.nextInstanceId)
 
       if (result.placements.length === 0) {
+        set({ autoPackFailures: result.failureReasons })
         state.addToast(tt.toasts.noPlaceablePosition, 'error')
         return
       }
@@ -531,6 +536,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         placements: result.placements,
         nextInstanceId: maxInstanceId + 1,
         stagedItems: [],
+        autoPackFailures: result.failureReasons,
         canUndo: historyManager.canUndo,
         canRedo: historyManager.canRedo,
         renderVersion: state.renderVersion + 1,
@@ -546,6 +552,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else {
       // packStaged
       if (state.stagedItems.length === 0) {
+        set({ autoPackFailures: [] })
         state.addToast(tt.toasts.noStagedItems, 'error')
         return
       }
@@ -559,14 +566,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       if (items.length === 0) {
+        set({ autoPackFailures: [] })
         state.addToast(tt.toasts.noStagedItems, 'error')
         return
       }
 
       const occMap = OccupancyMap.fromPlacements(state.placements, state.cargoDefs, state.container)
-      const result = autoPack(items, state.container, state.nextInstanceId, occMap)
+      const result = autoPack(items, state.container, state.nextInstanceId, occMap, {
+        existingPlacements: state.placements,
+        existingCargoDefs: state.cargoDefs,
+      })
 
       if (result.placements.length === 0) {
+        set({ autoPackFailures: result.failureReasons })
         state.addToast(tt.toasts.noPlaceablePosition, 'error')
         return
       }
@@ -603,6 +615,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         placements: newPlacements,
         nextInstanceId: maxInstanceId + 1,
         stagedItems: newStaged,
+        autoPackFailures: result.failureReasons,
         canUndo: historyManager.canUndo,
         canRedo: historyManager.canRedo,
         renderVersion: state.renderVersion + 1,
@@ -620,6 +633,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Staging
   stagedItems: [],
+  autoPackFailures: [],
   stageCargo: (cargoDefId, count = 1) => {
     set((state) => {
       const existing = state.stagedItems.find((s) => s.cargoDefId === cargoDefId)
@@ -643,7 +657,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().addToast(getTranslation().toasts.unstagedItem, 'info')
   },
   clearStaged: () => {
-    set({ stagedItems: [] })
+    set({ stagedItems: [], autoPackFailures: [] })
   },
 
   // Selection
@@ -758,6 +772,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       placements: data.placements,
       nextInstanceId: data.nextInstanceId,
       stagedItems: data.stagedItems ?? [],
+      autoPackFailures: [],
       selectedInstanceId: null,
       dragState: null,
       canUndo: false,

@@ -163,6 +163,8 @@ describe('autoPack', () => {
     const result = autoPack(defs, narrowContainer, 1)
     expect(result.placements).toHaveLength(0)
     expect(result.failedDefIds).toEqual(['a'])
+    expect(result.failureReasons).toHaveLength(1)
+    expect(result.failureReasons[0]!.code).toBe('OUT_OF_BOUNDS')
   })
 
   it('cube item has only 1 orientation candidate (deduplication)', () => {
@@ -262,5 +264,33 @@ describe('autoPack', () => {
     // checkInterference で干渉なし
     const interference = checkInterference(result.placements, defs)
     expect(interference.pairs).toHaveLength(0)
+  })
+
+  it('stack制約違反時に failureReasons を返す', () => {
+    const existingDef: CargoItemDef = {
+      id: 'base', name: 'Base', widthCm: 100, heightCm: 10, depthCm: 100,
+      weightKg: 1, color: '#aaa', maxStackWeightKg: 0,
+    }
+    const existingPlacement = {
+      instanceId: 1,
+      cargoDefId: 'base',
+      positionCm: { x: 0, y: 0, z: 0 },
+      rotationDeg: { x: 0, y: 0, z: 0 },
+    }
+    const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+    occMap.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 100, y: 10, z: 100 } })
+    const stagedDef: CargoItemDef = {
+      id: 'top', name: 'Top', widthCm: 20, heightCm: 20, depthCm: 20,
+      weightKg: 10, color: '#f00',
+    }
+
+    const result = autoPack([stagedDef], container, 10, occMap, {
+      existingPlacements: [existingPlacement],
+      existingCargoDefs: [existingDef, stagedDef],
+    })
+
+    expect(result.placements).toHaveLength(0)
+    expect(result.failureReasons).toHaveLength(1)
+    expect(result.failureReasons[0]!.code).toBe('STACK_CONSTRAINT')
   })
 })
