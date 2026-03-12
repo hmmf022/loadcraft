@@ -649,10 +649,14 @@ export function CanvasPanel() {
   useEffect(() => {
     const PAN_KEYS = new Set(['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
 
+    const ARROW_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      // Skip arrow keys when an object is selected — let App.tsx handle them for movement
+      if (ARROW_KEYS.has(e.key) && useAppStore.getState().selectedInstanceId !== null) return
       if (PAN_KEYS.has(e.key)) {
         e.preventDefault()
         pressedKeysRef.current.add(e.key)

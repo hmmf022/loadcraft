@@ -8,8 +8,34 @@ import { HelpOverlay } from './HelpOverlay'
 import { ViewButtons } from './ViewButtons'
 import { Toast } from './Toast'
 import { useAppStore } from '../state/store'
+import { getVoxelGrid } from '../core/voxelGridSingleton'
+import { voxelize, voxelizeComposite } from '../core/Voxelizer'
+import type { CargoItemDef, Vec3 } from '../core/types'
 import styles from './App.module.css'
 import sidebarStyles from './Sidebar.module.css'
+
+function canMoveSelectedTo(
+  def: CargoItemDef, newPos: Vec3, rotation: Vec3, excludeId: number,
+): boolean {
+  const grid = getVoxelGrid()
+  const pos = { x: Math.round(newPos.x), y: Math.round(newPos.y), z: Math.round(newPos.z) }
+  const result = def.blocks
+    ? voxelizeComposite(def.blocks, pos, rotation)
+    : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, rotation)
+  const { min, max } = result.aabb
+  if (min.x < 0 || min.y < 0 || min.z < 0) return false
+  if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return false
+  if (result.usesFastPath) {
+    for (let z = min.z; z < max.z; z++)
+      for (let y = min.y; y < max.y; y++)
+        for (let x = min.x; x < max.x; x++) {
+          const val = grid.get(x, y, z)
+          if (val !== 0 && val !== excludeId) return false
+        }
+    return true
+  }
+  return !grid.hasCollision(result.voxels, excludeId)
+}
 
 export function App() {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
@@ -100,6 +126,31 @@ export function App() {
           e.preventDefault()
           if (!dragState && store.selectedInstanceId !== null) {
             store.dropCargo(store.selectedInstanceId)
+          }
+        } else if (!dragState && store.selectedInstanceId !== null) {
+          // Arrow key / PageUp/PageDown movement for selected object
+          let dx = 0, dy = 0, dz = 0
+          switch (e.key) {
+            case 'ArrowRight': dx = 1; break
+            case 'ArrowLeft':  dx = -1; break
+            case 'ArrowDown':  dz = 1; break
+            case 'ArrowUp':    dz = -1; break
+            case 'PageUp':     dy = 1; break
+            case 'PageDown':   dy = -1; break
+            default: return
+          }
+          e.preventDefault()
+          const placement = store.placements.find((p) => p.instanceId === store.selectedInstanceId)
+          if (!placement) return
+          const def = store.cargoDefs.find((d) => d.id === placement.cargoDefId)
+          if (!def) return
+          const newPos = {
+            x: placement.positionCm.x + dx,
+            y: placement.positionCm.y + dy,
+            z: placement.positionCm.z + dz,
+          }
+          if (canMoveSelectedTo(def, newPos, placement.rotationDeg, store.selectedInstanceId)) {
+            store.moveCargo(store.selectedInstanceId, newPos)
           }
         }
       }
