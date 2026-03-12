@@ -165,13 +165,15 @@ export function registerPlacementTools(server: McpServer, session: SimulatorSess
 
   server.tool(
     'auto_pack',
-    'Auto-pack cargo into the container. mode="pack_staged" places staged items around existing placements (default). mode="repack" clears all placements and re-packs everything (existing + staged).',
+    'Auto-pack cargo into the container. mode="pack_staged" places staged items around existing placements (default). mode="repack" clears all placements and re-packs everything (existing + staged). Max 500 items.',
     {
       mode: z.enum(['repack', 'pack_staged']).default('pack_staged').describe('Pack mode: "repack" or "pack_staged"'),
+      timeout_ms: z.number().int().min(1000).max(120000).default(30000).describe('Timeout in milliseconds (default 30s, max 120s)'),
     },
     async (args) => {
       const mode = args.mode === 'repack' ? 'repack' : 'packStaged'
-      const result = session.autoPackCargo(mode)
+      const deadline = Date.now() + args.timeout_ms
+      const result = session.autoPackCargo(mode, deadline)
       if (!result.success) {
         return {
           content: [{
@@ -193,6 +195,27 @@ export function registerPlacementTools(server: McpServer, session: SimulatorSess
           placed: result.placed,
           failed: result.failed,
           failureReasons: result.failureReasons,
+        }, null, 2) }],
+      }
+    },
+  )
+
+  server.tool(
+    'restage_placements',
+    'Remove placed cargo and return them to the staging area. Useful after load_state to re-pack with auto_pack(mode: "pack_staged").',
+    {
+      instanceIds: z.array(z.number().int()).optional().describe('Instance IDs to restage. Omit to restage ALL placements.'),
+    },
+    async (args) => {
+      const result = session.restagePlacements(args.instanceIds)
+      if (!result.success) {
+        return { content: [{ type: 'text' as const, text: result.error! }], isError: true }
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          success: true,
+          restaged: result.restaged,
+          stagedItems: session.listStaged(),
         }, null, 2) }],
       }
     },

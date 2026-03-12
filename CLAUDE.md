@@ -159,7 +159,7 @@ LLM ↔ stdio (JSON-RPC) ↔ MCP Server (Node.js)
 - **session.ts**: `src/state/store.ts` の配置ビジネスロジックを React/Zustand 非依存で抽出
 - **ビルド**: `tsup` (ESM, Node.js target), `tsconfig.mcp.json` (DOM/WebGPU型を除外)
 
-### Tools (28)
+### Tools (29)
 
 | Category | Tool | Description |
 |----------|------|-------------|
@@ -179,7 +179,8 @@ LLM ↔ stdio (JSON-RPC) ↔ MCP Server (Node.js)
 | Placement | `move_cargo` | 移動 |
 | Placement | `rotate_cargo` | 回転 |
 | Placement | `drop_cargo` | 重力落下 |
-| Placement | `auto_pack` | 自動配置 |
+| Placement | `auto_pack` | 自動配置（上限500件, timeout対応） |
+| Placement | `restage_placements` | 配置済み→ステージング戻し |
 | Placement | `find_position` | 配置位置探索 |
 | Placement | `list_placements` | 全配置一覧 |
 | Placement | `get_placement` | 配置詳細取得 |

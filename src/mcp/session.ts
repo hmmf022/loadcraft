@@ -368,7 +368,12 @@ export class SimulatorSession {
     return { success: true, newY: bestY }
   }
 
-  autoPackCargo(mode: AutoPackMode = 'packStaged'): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
+  private static readonly MAX_AUTO_PACK_ITEMS = 500
+
+  autoPackCargo(
+    mode: AutoPackMode = 'packStaged',
+    deadlineMs?: number,
+  ): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
     if (mode === 'repack') {
       const allItems: CargoItemDef[] = []
       for (const p of this.placements) {
@@ -386,6 +391,16 @@ export class SimulatorSession {
         return { success: false, placed: 0, failed: 0, failureReasons: [], error: 'No items to repack' }
       }
 
+      if (allItems.length > SimulatorSession.MAX_AUTO_PACK_ITEMS) {
+        return {
+          success: false,
+          placed: 0,
+          failed: allItems.length,
+          failureReasons: [],
+          error: `Too many items (${allItems.length}). auto_pack supports up to ${SimulatorSession.MAX_AUTO_PACK_ITEMS} items. Consider packing in smaller batches using stage_cargo + auto_pack(mode: "pack_staged").`,
+        }
+      }
+
       const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
       for (const p of this.placements) {
         const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
@@ -393,7 +408,7 @@ export class SimulatorSession {
         removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
       }
 
-      const result = autoPack(allItems, this.container, this.nextInstanceId)
+      const result = autoPack(allItems, this.container, this.nextInstanceId, undefined, undefined, deadlineMs)
 
       if (result.placements.length === 0) {
         return {
@@ -444,11 +459,21 @@ export class SimulatorSession {
         return { success: false, placed: 0, failed: 0, failureReasons: [], error: 'No staged items' }
       }
 
+      if (items.length > SimulatorSession.MAX_AUTO_PACK_ITEMS) {
+        return {
+          success: false,
+          placed: 0,
+          failed: items.length,
+          failureReasons: [],
+          error: `Too many items (${items.length}). auto_pack supports up to ${SimulatorSession.MAX_AUTO_PACK_ITEMS} items. Consider packing in smaller batches using stage_cargo + auto_pack(mode: "pack_staged").`,
+        }
+      }
+
       const occMap = OccupancyMap.fromPlacements(this.placements, this.cargoDefs, this.container)
       const result = autoPack(items, this.container, this.nextInstanceId, occMap, {
         existingPlacements: this.placements,
         existingCargoDefs: this.cargoDefs,
-      })
+      }, deadlineMs)
 
       if (result.placements.length === 0) {
         return {
@@ -494,6 +519,44 @@ export class SimulatorSession {
         failureReasons: result.failureReasons,
       }
     }
+  }
+
+  restagePlacements(instanceIds?: number[]): { success: boolean; restaged: number; error?: string } {
+    const targets = instanceIds
+      ? this.placements.filter(p => instanceIds.includes(p.instanceId))
+      : [...this.placements]
+
+    if (targets.length === 0) {
+      return { success: false, restaged: 0, error: 'No matching placements found' }
+    }
+
+    // Count by cargoDefId for staging
+    const countMap = new Map<string, number>()
+    for (const p of targets) {
+      countMap.set(p.cargoDefId, (countMap.get(p.cargoDefId) ?? 0) + 1)
+    }
+
+    // Remove from placements + grid via BatchCommand (single undo)
+    const removeCommands: RemoveCommand[] = []
+    for (const p of targets) {
+      const def = this.cargoDefs.find(d => d.id === p.cargoDefId)
+      if (!def) continue
+      const result = voxelizeCargo(def, p.positionCm, p.rotationDeg)
+      removeCommands.push(new RemoveCommand(p.instanceId, result, def.name, p))
+    }
+
+    const batch = new BatchCommand(removeCommands)
+    this.history.executeCommand(batch, this.grid)
+
+    const targetIds = new Set(targets.map(t => t.instanceId))
+    this.placements = this.placements.filter(p => !targetIds.has(p.instanceId))
+
+    // Add to staged
+    for (const [defId, count] of countMap) {
+      this.stageCargo(defId, count)
+    }
+
+    return { success: true, restaged: targets.length }
   }
 
   findPosition(cargoDefId: string): { position: Vec3 | null } {
@@ -572,9 +635,14 @@ export class SimulatorSession {
         .filter((p) => !command.added.some((a) => a.placement.instanceId === p.instanceId))
       this.placements = [...this.placements, ...command.removed.map((r) => r.placement)]
     } else if (command instanceof BatchCommand) {
-      this.placements = this.placements.filter((p) =>
-        !command.commands.some((c) => c.placement.instanceId === p.instanceId)
-      )
+      // Undo batch: reverse each sub-command's effect on placements
+      for (const sub of command.commands) {
+        if (sub instanceof PlaceCommand) {
+          this.placements = this.placements.filter((p) => p.instanceId !== sub.instanceId)
+        } else if (sub instanceof RemoveCommand) {
+          this.placements = [...this.placements, sub.placement]
+        }
+      }
     }
 
     return { success: true, description: command.getDescription() }
@@ -601,8 +669,14 @@ export class SimulatorSession {
         .filter((p) => !command.removed.some((r) => r.placement.instanceId === p.instanceId))
       this.placements = [...this.placements, ...command.added.map((a) => a.placement)]
     } else if (command instanceof BatchCommand) {
-      const addedPlacements = command.commands.map((c) => c.placement)
-      this.placements = [...this.placements, ...addedPlacements]
+      // Redo batch: re-apply each sub-command's effect on placements
+      for (const sub of command.commands) {
+        if (sub instanceof PlaceCommand) {
+          this.placements = [...this.placements, sub.placement]
+        } else if (sub instanceof RemoveCommand) {
+          this.placements = this.placements.filter((p) => p.instanceId !== sub.instanceId)
+        }
+      }
     }
 
     return { success: true, description: command.getDescription() }

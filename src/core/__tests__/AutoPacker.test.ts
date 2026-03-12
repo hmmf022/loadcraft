@@ -293,4 +293,70 @@ describe('autoPack', () => {
     expect(result.failureReasons).toHaveLength(1)
     expect(result.failureReasons[0]!.code).toBe('STACK_CONSTRAINT')
   })
+
+  it('deadline: タイムアウト時に partial result を返す', () => {
+    const defs: CargoItemDef[] = []
+    for (let i = 0; i < 50; i++) {
+      defs.push({
+        id: `item-${i}`, name: `Item ${i}`,
+        widthCm: 20, heightCm: 20, depthCm: 20,
+        weightKg: 1, color: '#f00',
+      })
+    }
+    const bigContainer: ContainerDef = {
+      widthCm: 500, heightCm: 500, depthCm: 500, maxPayloadKg: 100000,
+    }
+    // Deadline already passed → all items should fail
+    const result = autoPack(defs, bigContainer, 1, undefined, undefined, 0)
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds).toHaveLength(50)
+    expect(result.failureReasons[0]!.detail).toContain('timed out')
+  })
+
+  it('200+個のアイテムをstack制約なしで配置（パフォーマンス）', () => {
+    const defs: CargoItemDef[] = []
+    for (let i = 0; i < 200; i++) {
+      defs.push({
+        id: `box-${i}`, name: `Box ${i}`,
+        widthCm: 10, heightCm: 10, depthCm: 10,
+        weightKg: 1, color: '#f00',
+      })
+    }
+    const bigContainer: ContainerDef = {
+      widthCm: 200, heightCm: 200, depthCm: 200, maxPayloadKg: 100000,
+    }
+    const start = Date.now()
+    const result = autoPack(defs, bigContainer, 1)
+    const elapsed = Date.now() - start
+    expect(result.placements.length).toBeGreaterThan(100)
+    expect(elapsed).toBeLessThan(10000) // Should complete well under 10s
+  })
+
+  it('stack制約ありの混在アイテムで正しくviolation検出', () => {
+    const baseDef: CargoItemDef = {
+      id: 'base', name: 'Base', widthCm: 100, heightCm: 10, depthCm: 100,
+      weightKg: 1, color: '#aaa', maxStackWeightKg: 5,
+    }
+    const heavyDef: CargoItemDef = {
+      id: 'heavy', name: 'Heavy', widthCm: 20, heightCm: 20, depthCm: 20,
+      weightKg: 10, color: '#f00',
+    }
+    const existingPlacement = {
+      instanceId: 1,
+      cargoDefId: 'base',
+      positionCm: { x: 0, y: 0, z: 0 },
+      rotationDeg: { x: 0, y: 0, z: 0 },
+    }
+    const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+    occMap.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 100, y: 10, z: 100 } })
+
+    const result = autoPack([heavyDef], container, 10, occMap, {
+      existingPlacements: [existingPlacement],
+      existingCargoDefs: [baseDef, heavyDef],
+    })
+
+    // Heavy item (10kg) exceeds base maxStackWeightKg (5kg)
+    expect(result.placements).toHaveLength(0)
+    expect(result.failureReasons[0]!.code).toBe('STACK_CONSTRAINT')
+  })
 })

@@ -2,7 +2,7 @@ import type { CargoItemDef, ContainerDef, PlacedCargo, Vec3 } from './types'
 import type { VoxelizeResult } from './Voxelizer'
 import { voxelize, voxelizeComposite, computeRotatedAABB } from './Voxelizer'
 import { OccupancyMap } from './OccupancyMap'
-import { checkStackConstraints } from './StackChecker'
+import { buildStackContext, checkStackIncremental, addToStackContext } from './StackChecker'
 
 export interface PackResult {
   placements: PlacedCargo[]
@@ -77,12 +77,10 @@ function getOrientationCandidates(def: CargoItemDef): OrientationCandidate[] {
   return candidates
 }
 
-/** Position comparison: prefer smallest X (back wall), then lowest Y */
-function isBetter(pos: Vec3, best: Vec3 | null): boolean {
-  if (!best) return true
-  if (pos.x < best.x) return true
-  if (pos.x === best.x && pos.y < best.y) return true
-  return false
+interface ScoredCandidate {
+  placement: PlacedCargo
+  result: VoxelizeResult
+  score: number
 }
 
 /**
@@ -95,6 +93,7 @@ export function autoPack(
   startInstanceId: number,
   baseOccMap?: OccupancyMap,
   context?: AutoPackContext,
+  deadlineMs?: number,
 ): PackResult {
   const placements: PlacedCargo[] = []
   const voxelizeResults: VoxelizeResult[] = []
@@ -117,6 +116,14 @@ export function autoPack(
   const allDefs = dedupeDefs([...existingDefs, ...items])
   const placedAabbs = buildAabbList(existingPlacements, allDefs)
 
+  // Skip stack constraint checking entirely if no defs have constraints
+  const hasAnyStackConstraints = allDefs.some(
+    d => d.noStack === true || d.maxStackWeightKg !== undefined
+  )
+  const stackCtx = hasAnyStackConstraints
+    ? buildStackContext(existingPlacements, allDefs)
+    : null
+
   let runningTotalWeight = 0
   let runningCogX = 0
   let runningCogY = 0
@@ -132,14 +139,20 @@ export function autoPack(
     runningCogZ += center.z * def.weightKg
   }
 
-  const currentPlacements: PlacedCargo[] = [...existingPlacements]
-
   for (const def of sorted) {
-    const candidates = getOrientationCandidates(def)
+    // Deadline check: abort remaining items on timeout
+    if (deadlineMs !== undefined && Date.now() > deadlineMs) {
+      failedDefIds.push(def.id)
+      failureReasons.push({
+        cargoDefId: def.id,
+        cargoName: def.name,
+        code: 'NO_FEASIBLE_POSITION',
+        detail: 'Auto-pack timed out.',
+      })
+      continue
+    }
 
-    let bestPlacement: PlacedCargo | null = null
-    let bestResult: VoxelizeResult | null = null
-    let bestScore = Number.POSITIVE_INFINITY
+    const candidates = getOrientationCandidates(def)
 
     let hadOrientationFit = false
     let hadCandidatePosition = false
@@ -147,6 +160,9 @@ export function autoPack(
     let hadCollision = false
     let hadNoSupport = false
     let hadStackConstraint = false
+
+    // Collect all candidates that pass bounds/collision/support, then check stack in score order
+    const scoredCandidates: ScoredCandidate[] = []
 
     for (const c of candidates) {
       if (c.effW > container.widthCm || c.effH > container.heightCm || c.effD > container.depthCm) {
@@ -212,11 +228,6 @@ export function autoPack(
           positionCm: pos,
           rotationDeg: c.rot,
         }
-        const violations = checkStackConstraints([...currentPlacements, placement], allDefs)
-        if (violations.length > 0) {
-          hadStackConstraint = true
-          continue
-        }
 
         const score = scorePlacement(
           placement,
@@ -228,20 +239,35 @@ export function autoPack(
           runningCogZ,
           supportRatio,
         )
-        if (score < bestScore || (score === bestScore && isBetter(placement.positionCm, bestPlacement?.positionCm ?? null))) {
-          bestPlacement = placement
-          bestResult = result
-          bestScore = score
+        scoredCandidates.push({ placement, result, score })
+      }
+    }
+
+    // Sort by score (ascending = better) and check stack constraints in order
+    scoredCandidates.sort((a, b) => a.score - b.score)
+
+    let bestPlacement: PlacedCargo | null = null
+    let bestResult: VoxelizeResult | null = null
+
+    for (const cand of scoredCandidates) {
+      if (stackCtx) {
+        const violations = checkStackIncremental(stackCtx, cand.placement, def)
+        if (violations.length > 0) {
+          hadStackConstraint = true
+          continue
         }
       }
+      bestPlacement = cand.placement
+      bestResult = cand.result
+      break
     }
 
     if (bestPlacement && bestResult) {
       occMap.markAABB(bestResult.aabb)
       placedAabbs.push(bestResult.aabb)
       placements.push(bestPlacement)
-      currentPlacements.push(bestPlacement)
       voxelizeResults.push(bestResult)
+      if (stackCtx) addToStackContext(stackCtx, bestPlacement, def)
       const center = getPlacementCenter(bestPlacement, def)
       runningTotalWeight += def.weightKg
       runningCogX += center.x * def.weightKg
