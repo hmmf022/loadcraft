@@ -1,16 +1,6 @@
 import { useAppStore } from '../state/store'
-import type { Vec3, CargoItemDef } from '../core/types'
-import { OccupancyMap } from '../core/OccupancyMap'
-import { computeRotatedAABB } from '../core/Voxelizer'
-import { ORIENTATIONS } from '../core/AutoPacker'
 import { useTranslation } from '../i18n'
 import styles from './CargoList.module.css'
-
-/** Y-axis-only orientations for noFlip items */
-const NOFLIP_ORIENTATIONS: Vec3[] = [
-  { x: 0, y: 0, z: 0 },
-  { x: 0, y: 90, z: 0 },
-]
 
 export function CargoList() {
   const cargoDefs = useAppStore((s) => s.cargoDefs)
@@ -21,10 +11,7 @@ export function CargoList() {
 
   const handlePlace = (defId: string) => {
     const state = useAppStore.getState()
-    const def = state.cargoDefs.find((d) => d.id === defId)
-    if (!def) return
-
-    const result = findPlacementWithRotation(def)
+    const result = state.findPlacementPosition(defId)
     if (result) {
       placeCargo(defId, result.position, result.rotation)
       const newState = useAppStore.getState()
@@ -117,46 +104,4 @@ export function CargoList() {
       ))}
     </div>
   )
-}
-
-/** Try all rotation candidates and find the first placement position */
-function findPlacementWithRotation(
-  def: CargoItemDef,
-): { position: Vec3; rotation: Vec3 } | null {
-  const state = useAppStore.getState()
-  const orientations = def.noFlip ? NOFLIP_ORIENTATIONS : ORIENTATIONS
-
-  // Deduplicate orientations by effective AABB size
-  const seen = new Set<string>()
-  const candidates: { rot: Vec3; effW: number; effH: number; effD: number; offsetX: number; offsetY: number; offsetZ: number }[] = []
-  for (const rot of orientations) {
-    const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, { x: 0, y: 0, z: 0 }, rot)
-    const effW = aabb.max.x - aabb.min.x
-    const effH = aabb.max.y - aabb.min.y
-    const effD = aabb.max.z - aabb.min.z
-    const key = `${effW},${effH},${effD}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    candidates.push({ rot, effW, effH, effD, offsetX: -aabb.min.x, offsetY: -aabb.min.y, offsetZ: -aabb.min.z })
-  }
-
-  const map = OccupancyMap.fromPlacements(
-    state.placements, state.cargoDefs, state.container,
-  )
-
-  for (const c of candidates) {
-    const position = map.findPosition(c.effW, c.effH, c.effD)
-    if (position) {
-      return {
-        position: {
-          x: position.x + c.offsetX,
-          y: position.y + c.offsetY,
-          z: position.z + c.offsetZ,
-        },
-        rotation: c.rot,
-      }
-    }
-  }
-
-  return null
 }

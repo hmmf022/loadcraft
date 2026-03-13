@@ -1,30 +1,23 @@
 import { create } from 'zustand'
 import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView, WeightResult, StagedItem, AutoPackMode } from '../core/types'
-import { CONTAINER_PRESETS } from '../core/types'
-import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
-import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History'
-import { autoPack } from '../core/AutoPacker'
 import type { PackFailureReason } from '../core/AutoPacker'
-import { OccupancyMap } from '../core/OccupancyMap'
-import { checkInterference } from '../core/InterferenceChecker'
-import type { InterferencePair } from '../core/InterferenceChecker'
-import { voxelize, voxelizeComposite } from '../core/Voxelizer'
+import { CONTAINER_PRESETS } from '../core/types'
+import { createVoxelGrid, getVoxelGrid } from '../core/voxelGridSingleton'
 import { computeWeight, computeCogDeviation } from '../core/WeightCalculator'
 import type { CogDeviation } from '../core/WeightCalculator'
 import { checkAllSupports } from '../core/GravityChecker'
 import type { SupportResult } from '../core/GravityChecker'
 import { checkStackConstraints } from '../core/StackChecker'
 import type { StackViolation } from '../core/StackChecker'
-import { serializeSaveData } from '../core/SaveLoad'
+import type { InterferencePair } from '../core/InterferenceChecker'
 import { downloadJson } from '../ui/downloadJson'
 import { getTranslation, interpolate } from '../i18n'
 import type { SaveData } from '../core/SaveLoad'
-import type { VoxelizeResult } from '../core/Voxelizer'
-import type { VoxelGrid } from '../core/VoxelGrid'
-import { tryKick } from '../core/WallKick'
+import { SimulatorSession } from '../core/SimulatorSession'
+import { OccupancyMap } from '../core/OccupancyMap'
+import { voxelize, voxelizeComposite, computeRotatedAABB } from '../core/Voxelizer'
+import { ORIENTATIONS } from '../core/AutoPacker'
 
-const defaultContainer = CONTAINER_PRESETS[0]!
-const historyManager = new HistoryManager(100)
 const AUTO_PACK_BASE_MS = 15_000
 const AUTO_PACK_PER_ITEM_MS = 500
 
@@ -34,6 +27,13 @@ const initialWeightResult: WeightResult = {
   fillRatePercent: 0,
   overweight: false,
 }
+
+const session = new SimulatorSession({
+  gridFactory: (def: ContainerDef) => {
+    createVoxelGrid(def)
+    return getVoxelGrid()
+  },
+})
 
 export interface AppState {
   // Container
@@ -125,7 +125,13 @@ export interface AppState {
   canRedo: boolean
   undo: () => void
   redo: () => void
+
+  // Helpers (used by UI components)
+  canMoveTo: (instanceId: number, newPosition: Vec3) => boolean
+  findPlacementPosition: (cargoDefId: string) => { position: Vec3; rotation: Vec3 } | null
 }
+
+// --- Analytics ---
 
 function recomputeAnalyticsSync(
   placements: PlacedCargo[],
@@ -154,6 +160,29 @@ function scheduleAnalytics(): void {
   }, 0)
 }
 
+// --- Sync helper ---
+
+function syncFromSession(
+  set: (partial: Partial<AppState>) => void,
+  get: () => AppState,
+): void {
+  set({
+    container: session.container,
+    placements: [...session.placements],
+    cargoDefs: [...session.cargoDefs],
+    nextInstanceId: session.nextInstanceId,
+    stagedItems: [...session.stagedItems],
+    canUndo: session.history.canUndo,
+    canRedo: session.history.canRedo,
+    renderVersion: get().renderVersion + 1,
+  })
+  scheduleAnalytics()
+}
+
+// --- Store ---
+
+const defaultContainer = CONTAINER_PRESETS[0]!
+
 export const useAppStore = create<AppState>((set, get) => ({
   // Container
   container: {
@@ -163,13 +192,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     maxPayloadKg: defaultContainer.maxPayloadKg,
   },
   setContainer: (def) => {
-    // Recreate VoxelGrid for new container
-    createVoxelGrid(def)
-    historyManager.clear()
+    session.setContainer(def)
     set((state) => ({
       container: def,
       placements: [],
       nextInstanceId: 1,
+      stagedItems: [],
       selectedInstanceId: null,
       dragState: null,
       canUndo: false,
@@ -185,471 +213,126 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Cargo definitions
   cargoDefs: [],
-  addCargoDef: (def) => set((state) => ({
-    cargoDefs: [...state.cargoDefs, def],
-  })),
+  addCargoDef: (def) => {
+    session.addCargoDef(def)
+    set({ cargoDefs: [...session.cargoDefs] })
+  },
   removeCargoDef: (id) => {
-    const state = get()
-    // Remove placements of this def from VoxelGrid
-    const toRemove = state.placements.filter((p) => p.cargoDefId === id)
-    const grid = getVoxelGrid()
-    for (const p of toRemove) {
-      grid.clearObject(p.instanceId)
-    }
-    const newPlacements = state.placements.filter((p) => p.cargoDefId !== id)
-    const newDefs = state.cargoDefs.filter((d) => d.id !== id)
-    const newStaged = state.stagedItems.filter((s) => s.cargoDefId !== id)
-    set({
-      cargoDefs: newDefs,
-      placements: newPlacements,
-      stagedItems: newStaged,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
+    session.removeCargoDef(id)
+    syncFromSession(set, get)
   },
   updateCargoDef: (id, updates) => {
-    set((state) => ({
-      cargoDefs: state.cargoDefs.map((d) =>
-        d.id === id ? { ...d, ...updates } : d,
-      ),
-      renderVersion: state.renderVersion + 1,
-    }))
+    session.updateCargoDef(id, updates)
+    set({
+      cargoDefs: [...session.cargoDefs],
+      renderVersion: get().renderVersion + 1,
+    })
   },
   importCargoDefs: (defs) => {
-    set((state) => ({
-      cargoDefs: [...state.cargoDefs, ...defs],
-    }))
+    for (const def of defs) {
+      session.addCargoDef(def)
+    }
+    set({ cargoDefs: [...session.cargoDefs] })
   },
 
   // Placements
   placements: [],
   nextInstanceId: 1,
   placeCargo: (cargoDefId, position, rotation) => {
-    const state = get()
-    const def = state.cargoDefs.find((d) => d.id === cargoDefId)
-    if (!def) return
-    if (state.nextInstanceId > 65534) return
-
-    const instanceId = state.nextInstanceId
-    const pos = { x: Math.round(position.x), y: Math.round(position.y), z: Math.round(position.z) }
-    const rot = rotation ?? { x: 0, y: 0, z: 0 }
-
-    const result = voxelizeCargo(def, pos, rot)
-    const grid = getVoxelGrid()
-
-    // Bounds check via AABB
-    const { min, max } = result.aabb
-    if (min.x < 0 || min.y < 0 || min.z < 0 ||
-        max.x > grid.width || max.y > grid.height || max.z > grid.depth) {
+    const result = session.placeCargo(cargoDefId, position, rotation, true)
+    if (!result.success) {
       get().addToast(getTranslation().toasts.placementOutOfBounds, 'error')
       return
     }
-
-    const newPlacement: PlacedCargo = {
-      instanceId,
-      cargoDefId,
-      positionCm: pos,
-      rotationDeg: rot,
-    }
-
-    const cmd = new PlaceCommand(instanceId, result, def.name, newPlacement)
-    historyManager.executeCommand(cmd, grid)
-
-    const newPlacements = [...state.placements, newPlacement]
-
-    set({
-      placements: newPlacements,
-      nextInstanceId: instanceId + 1,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
+    syncFromSession(set, get)
   },
   removePlacement: (instanceId) => {
+    const result = session.removePlacement(instanceId)
+    if (!result.success) return
     const state = get()
-    const placement = state.placements.find((p) => p.instanceId === instanceId)
-    if (!placement) return
-
-    const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
-    const grid = getVoxelGrid()
-
-    if (def) {
-      const pos = placement.positionCm
-      const rot = placement.rotationDeg
-      const result = voxelizeCargo(def, pos, rot)
-      const cmd = new RemoveCommand(instanceId, result, def.name, placement)
-      historyManager.executeCommand(cmd, grid)
-    } else {
-      grid.clearObject(instanceId)
+    syncFromSession(set, get)
+    if (state.selectedInstanceId === instanceId) {
+      set({ selectedInstanceId: null })
     }
-
-    const newPlacements = state.placements.filter((p) => p.instanceId !== instanceId)
-
-    set({
-      placements: newPlacements,
-      selectedInstanceId: state.selectedInstanceId === instanceId ? null : state.selectedInstanceId,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
   },
   moveCargo: (instanceId, newPosition) => {
-    const state = get()
-    const placement = state.placements.find((p) => p.instanceId === instanceId)
-    if (!placement) return
-
-    const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
-    if (!def) return
-
-    const grid = getVoxelGrid()
-    const oldPos = placement.positionCm
-    const rot = placement.rotationDeg
-    const newPos = { x: Math.round(newPosition.x), y: Math.round(newPosition.y), z: Math.round(newPosition.z) }
-
-    const oldResult = voxelizeCargo(def, oldPos, rot)
-    const newResult = voxelizeCargo(def, newPos, rot)
-
-    // Bounds check
-    const { min, max } = newResult.aabb
-    if (min.x < 0 || min.y < 0 || min.z < 0) return
-    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return
-
-    const updatedPlacement: PlacedCargo = {
-      ...placement,
-      positionCm: newPos,
-    }
-
-    const cmd = new MoveCommand(
-      instanceId, oldResult, newResult,
-      def.name, updatedPlacement, placement,
-    )
-    historyManager.executeCommand(cmd, grid)
-
-    const newPlacements = state.placements.map((p) =>
-      p.instanceId === instanceId ? updatedPlacement : p,
-    )
-
-    set({
-      placements: newPlacements,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
+    const result = session.moveCargo(instanceId, newPosition, true)
+    if (!result.success) return
+    syncFromSession(set, get)
   },
   rotateCargo: (instanceId, newRotation) => {
-    const state = get()
-    const placement = state.placements.find((p) => p.instanceId === instanceId)
-    if (!placement) return
-
-    const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
-    if (!def) return
-
-    // noFlip check: reject X/Z axis rotation for noFlip items
-    if (def.noFlip) {
-      const oldRot = placement.rotationDeg
-      const xChanged = ((newRotation.x % 360) + 360) % 360 !== ((oldRot.x % 360) + 360) % 360
-      const zChanged = ((newRotation.z % 360) + 360) % 360 !== ((oldRot.z % 360) + 360) % 360
-      if (xChanged || zChanged) {
-        get().addToast(getTranslation().toasts.noFlipViolation, 'error')
-        return
+    const tt = getTranslation()
+    const result = session.rotateCargo(instanceId, newRotation, get().forceMode)
+    if (!result.success) {
+      if (result.error === 'noFlip cargo cannot be rotated on X/Z axes') {
+        get().addToast(tt.toasts.noFlipViolation, 'error')
+      } else if (result.error === 'Rotated cargo exceeds container bounds') {
+        get().addToast(tt.toasts.rotationExceedsContainer, 'error')
+      } else {
+        get().addToast(tt.toasts.rotationCollision, 'error')
       }
+      return
     }
-
-    const grid = getVoxelGrid()
-    const pos = placement.positionCm
-    const oldRot = placement.rotationDeg
-
-    const oldResult = voxelizeCargo(def, pos, oldRot)
-    let newPos = pos
-    let newResult = voxelizeCargo(def, newPos, newRotation)
-
-    // Auto-correct: shift position to keep AABB within container
-    const { min, max } = newResult.aabb
-    let dx = 0, dy = 0, dz = 0
-    if (min.x < 0) dx = -min.x
-    else if (max.x > grid.width) dx = grid.width - max.x
-    if (min.y < 0) dy = -min.y
-    else if (max.y > grid.height) dy = grid.height - max.y
-    if (min.z < 0) dz = -min.z
-    else if (max.z > grid.depth) dz = grid.depth - max.z
-
-    if (dx !== 0 || dy !== 0 || dz !== 0) {
-      newPos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
-      newResult = voxelizeCargo(def, newPos, newRotation)
-      // Re-check after correction (object may be larger than container)
-      const { min: m2, max: x2 } = newResult.aabb
-      if (m2.x < 0 || m2.y < 0 || m2.z < 0 ||
-          x2.x > grid.width || x2.y > grid.height || x2.z > grid.depth) {
-        get().addToast(getTranslation().toasts.rotationExceedsContainer, 'error')
-        return
-      }
+    if (result.kicked) {
+      get().addToast(tt.toasts.kickApplied, 'info')
     }
-
-    // Collision check: clear old, test new (skip collision check in force mode)
-    fillFromResult(grid, oldResult, 0)
-    if (!get().forceMode) {
-      const hasCollision = checkCollision(grid, newResult, instanceId)
-      if (hasCollision) {
-        // Try wall-kick
-        const kick = tryKick(
-          grid, def, newPos, newRotation, instanceId,
-          voxelizeCargo, checkCollision,
-        )
-        if (kick) {
-          newPos = kick.position
-          newResult = kick.result
-          get().addToast(getTranslation().toasts.kickApplied, 'info')
-        } else {
-          // Restore old
-          fillFromResult(grid, oldResult, instanceId)
-          get().addToast(getTranslation().toasts.rotationCollision, 'error')
-          return
-        }
-      }
-    }
-    // Restore old (RotateCommand.execute will handle the actual change)
-    fillFromResult(grid, oldResult, instanceId)
-
-    const updatedPlacement: PlacedCargo = {
-      ...placement,
-      positionCm: newPos,
-      rotationDeg: newRotation,
-    }
-
-    const cmd = new RotateCommand(
-      instanceId, oldResult, newResult,
-      def.name, updatedPlacement, placement,
-    )
-    historyManager.executeCommand(cmd, grid)
-
-    const newPlacements = state.placements.map((p) =>
-      p.instanceId === instanceId ? updatedPlacement : p,
-    )
-
-    set({
-      placements: newPlacements,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
+    syncFromSession(set, get)
   },
 
   dropCargo: (instanceId) => {
-    const state = get()
-    const placement = state.placements.find((p) => p.instanceId === instanceId)
-    if (!placement) return
-
-    const def = state.cargoDefs.find((d) => d.id === placement.cargoDefId)
-    if (!def) return
-
-    const grid = getVoxelGrid()
-    const pos = placement.positionCm
-    const rot = placement.rotationDeg
-
-    // Voxelize at current position and temporarily clear from grid
-    const oldResult = voxelizeCargo(def, pos, rot)
-    fillFromResult(grid, oldResult, 0)
-
-    // Scan from Y=0 upward to find the lowest valid position
-    let bestY = -1
-    for (let y = 0; y <= pos.y; y++) {
-      const testResult = voxelizeCargo(def, { x: pos.x, y, z: pos.z }, rot)
-      const { min, max } = testResult.aabb
-      if (min.x < 0 || min.y < 0 || min.z < 0) continue
-      if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) continue
-      if (checkCollision(grid, testResult, instanceId)) continue
-      bestY = y
-      break
-    }
-
-    // Restore grid
-    fillFromResult(grid, oldResult, instanceId)
-
-    // No valid position found, or already at lowest
-    if (bestY < 0 || bestY === pos.y) return
-
-    // Use moveCargo for undo/redo support
-    state.moveCargo(instanceId, { x: pos.x, y: bestY, z: pos.z })
+    session.dropCargo(instanceId)
+    syncFromSession(set, get)
   },
 
   autoPackCargo: (mode: AutoPackMode) => {
-    const state = get()
     const tt = getTranslation()
-    const grid = getVoxelGrid()
 
+    // Pre-check for empty cases with toasts
     if (mode === 'repack') {
-      // Collect all items: existing placements + staged items
-      const allItems: CargoItemDef[] = []
-
-      // Existing placements → defs
-      for (const p of state.placements) {
-        const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
-        if (def) allItems.push(def)
-      }
-
-      // Staged items → defs (expand count)
-      for (const si of state.stagedItems) {
-        const def = state.cargoDefs.find((d) => d.id === si.cargoDefId)
-        if (def) {
-          for (let i = 0; i < si.count; i++) allItems.push(def)
-        }
-      }
-
-      if (allItems.length === 0) {
+      if (session.placements.length === 0 && session.stagedItems.length === 0) {
         set({ autoPackFailures: [] })
-        state.addToast(tt.toasts.noCargoForPack, 'error')
+        get().addToast(tt.toasts.noCargoForPack, 'error')
         return
-      }
-
-      // Voxelize existing placements for removal
-      const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
-      for (const p of state.placements) {
-        const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
-        if (!def) continue
-        removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
-      }
-
-      const deadline = Date.now() + Math.max(AUTO_PACK_BASE_MS, allItems.length * AUTO_PACK_PER_ITEM_MS)
-      const result = autoPack(allItems, state.container, state.nextInstanceId, undefined, undefined, deadline, 'default')
-
-      if (result.placements.length === 0) {
-        set({ autoPackFailures: result.failureReasons })
-        state.addToast(tt.toasts.noPlaceablePosition, 'error')
-        return
-      }
-
-      // Build RepackCommand
-      const addedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
-      for (let i = 0; i < result.placements.length; i++) {
-        addedEntries.push({ placement: result.placements[i]!, result: result.voxelizeResults[i]! })
-      }
-
-      const repackCmd = new RepackCommand(removedEntries, addedEntries)
-      historyManager.executeCommand(repackCmd, grid)
-
-      const maxInstanceId = result.placements.reduce(
-        (mx, p) => Math.max(mx, p.instanceId), state.nextInstanceId,
-      )
-
-      // Restage items that failed to place
-      const placedCountByDef = new Map<string, number>()
-      for (const p of result.placements) {
-        placedCountByDef.set(p.cargoDefId, (placedCountByDef.get(p.cargoDefId) ?? 0) + 1)
-      }
-      const allCountByDef = new Map<string, number>()
-      for (const item of allItems) {
-        allCountByDef.set(item.id, (allCountByDef.get(item.id) ?? 0) + 1)
-      }
-      const newStaged: StagedItem[] = []
-      for (const [defId, totalCount] of allCountByDef) {
-        const placed = placedCountByDef.get(defId) ?? 0
-        const remaining = totalCount - placed
-        if (remaining > 0) {
-          newStaged.push({ cargoDefId: defId, count: remaining })
-        }
-      }
-
-      set({
-        placements: result.placements,
-        nextInstanceId: maxInstanceId + 1,
-        stagedItems: newStaged,
-        autoPackFailures: result.failureReasons,
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
-      scheduleAnalytics()
-
-      const failCount = result.failedDefIds.length
-      if (failCount > 0) {
-        state.addToast(interpolate(tt.toasts.repackPartial, { placed: result.placements.length, failed: failCount }), 'info')
-      } else {
-        state.addToast(interpolate(tt.toasts.repackComplete, { placed: result.placements.length }), 'success')
       }
     } else {
-      // packStaged
-      if (state.stagedItems.length === 0) {
+      if (session.stagedItems.length === 0) {
         set({ autoPackFailures: [] })
-        state.addToast(tt.toasts.noStagedItems, 'error')
+        get().addToast(tt.toasts.noStagedItems, 'error')
         return
       }
+    }
 
-      const items: CargoItemDef[] = []
-      for (const si of state.stagedItems) {
-        const def = state.cargoDefs.find((d) => d.id === si.cargoDefId)
-        if (def) {
-          for (let i = 0; i < si.count; i++) items.push(def)
-        }
-      }
+    // Compute item count for deadline
+    let itemCount = 0
+    if (mode === 'repack') {
+      itemCount = session.placements.length
+      for (const si of session.stagedItems) itemCount += si.count
+    } else {
+      for (const si of session.stagedItems) itemCount += si.count
+    }
+    const deadline = Date.now() + Math.max(AUTO_PACK_BASE_MS, itemCount * AUTO_PACK_PER_ITEM_MS)
 
-      if (items.length === 0) {
-        set({ autoPackFailures: [] })
-        state.addToast(tt.toasts.noStagedItems, 'error')
-        return
-      }
+    const result = session.autoPackCargo(mode, deadline)
+    set({ autoPackFailures: result.failureReasons })
 
-      const occMap = OccupancyMap.fromPlacements(state.placements, state.cargoDefs, state.container)
-      const deadline = Date.now() + Math.max(AUTO_PACK_BASE_MS, items.length * AUTO_PACK_PER_ITEM_MS)
-      const result = autoPack(items, state.container, state.nextInstanceId, occMap, {
-        existingPlacements: state.placements,
-        existingCargoDefs: state.cargoDefs,
-      }, deadline, 'default')
-
-      if (result.placements.length === 0) {
-        set({ autoPackFailures: result.failureReasons })
-        state.addToast(tt.toasts.noPlaceablePosition, 'error')
-        return
-      }
-
-      // BatchCommand of PlaceCommands
-      const commands: PlaceCommand[] = []
-      for (let i = 0; i < result.placements.length; i++) {
-        const p = result.placements[i]!
-        const r = result.voxelizeResults[i]!
-        const def = state.cargoDefs.find((d) => d.id === p.cargoDefId)
-        if (!def) continue
-        commands.push(new PlaceCommand(p.instanceId, r, def.name, p))
-      }
-
-      const batch = new BatchCommand(commands)
-      historyManager.executeCommand(batch, grid)
-
-      const newPlacements = [...state.placements, ...result.placements]
-      const maxInstanceId = result.placements.reduce(
-        (mx, p) => Math.max(mx, p.instanceId), state.nextInstanceId,
-      )
-
-      // Decrement staged counts for successfully placed items
-      const placedCountByDef = new Map<string, number>()
-      for (const p of result.placements) {
-        placedCountByDef.set(p.cargoDefId, (placedCountByDef.get(p.cargoDefId) ?? 0) + 1)
-      }
-      const newStaged = state.stagedItems.map((si) => {
-        const placed = placedCountByDef.get(si.cargoDefId) ?? 0
-        return { ...si, count: si.count - placed }
-      }).filter((si) => si.count > 0)
-
-      set({
-        placements: newPlacements,
-        nextInstanceId: maxInstanceId + 1,
-        stagedItems: newStaged,
-        autoPackFailures: result.failureReasons,
-        canUndo: historyManager.canUndo,
-        canRedo: historyManager.canRedo,
-        renderVersion: state.renderVersion + 1,
-      })
-      scheduleAnalytics()
-
-      const failCount = result.failedDefIds.length
-      if (failCount > 0) {
-        state.addToast(interpolate(tt.toasts.autoPackPartial, { placed: result.placements.length, failed: failCount }), 'info')
+    if (!result.success) {
+      if (result.error === 'No items could be placed') {
+        get().addToast(tt.toasts.noPlaceablePosition, 'error')
       } else {
-        state.addToast(interpolate(tt.toasts.autoPackComplete, { placed: result.placements.length }), 'success')
+        get().addToast(result.error ?? tt.toasts.noPlaceablePosition, 'error')
       }
+      syncFromSession(set, get)
+      return
+    }
+
+    syncFromSession(set, get)
+
+    if (result.failed > 0) {
+      const key = mode === 'repack' ? tt.toasts.repackPartial : tt.toasts.autoPackPartial
+      get().addToast(interpolate(key, { placed: result.placed, failed: result.failed }), 'info')
+    } else {
+      const key = mode === 'repack' ? tt.toasts.repackComplete : tt.toasts.autoPackComplete
+      get().addToast(interpolate(key, { placed: result.placed }), 'success')
     }
   },
 
@@ -657,28 +340,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   stagedItems: [],
   autoPackFailures: [],
   stageCargo: (cargoDefId, count = 1) => {
-    set((state) => {
-      const existing = state.stagedItems.find((s) => s.cargoDefId === cargoDefId)
-      if (existing) {
-        return {
-          stagedItems: state.stagedItems.map((s) =>
-            s.cargoDefId === cargoDefId ? { ...s, count: s.count + count } : s,
-          ),
-        }
-      }
-      return { stagedItems: [...state.stagedItems, { cargoDefId, count }] }
-    })
+    session.stageCargo(cargoDefId, count)
+    set({ stagedItems: [...session.stagedItems] })
     get().addToast(getTranslation().toasts.stagedItem, 'info')
   },
   unstageCargo: (cargoDefId, count = 1) => {
-    set((state) => ({
-      stagedItems: state.stagedItems
-        .map((s) => s.cargoDefId === cargoDefId ? { ...s, count: s.count - count } : s)
-        .filter((s) => s.count > 0),
-    }))
+    session.unstageCargo(cargoDefId, count)
+    set({ stagedItems: [...session.stagedItems] })
     get().addToast(getTranslation().toasts.unstagedItem, 'info')
   },
   clearStaged: () => {
+    session.clearStaged()
     set({ stagedItems: [], autoPackFailures: [] })
   },
 
@@ -744,56 +416,30 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Interference
   interferenceResults: [],
   checkInterference: () => {
-    const state = get()
-    const result = checkInterference(state.placements, state.cargoDefs)
+    const result = session.checkInterferenceAll()
     set({ interferenceResults: result.pairs })
     const tt = getTranslation()
     if (result.pairs.length > 0) {
-      state.addToast(interpolate(tt.toasts.interferenceFound, { count: result.pairs.length }), 'error')
+      get().addToast(interpolate(tt.toasts.interferenceFound, { count: result.pairs.length }), 'error')
     } else {
-      state.addToast(tt.toasts.noInterference, 'success')
+      get().addToast(tt.toasts.noInterference, 'success')
     }
   },
 
   // Save/Load
   saveState: () => {
-    const state = get()
-    const json = serializeSaveData({
-      container: state.container,
-      cargoDefs: state.cargoDefs,
-      placements: state.placements,
-      nextInstanceId: state.nextInstanceId,
-      stagedItems: state.stagedItems,
-    })
+    const json = session.serialize()
     downloadJson(json, 'container-layout.json')
   },
   loadState: (data: SaveData) => {
-    // Recreate VoxelGrid
-    createVoxelGrid(data.container)
-    const grid = getVoxelGrid()
-
-    // Restore all placements into VoxelGrid
-    const defMap = new Map<string, CargoItemDef>()
-    for (const d of data.cargoDefs) {
-      defMap.set(d.id, d)
-    }
-    for (const p of data.placements) {
-      const def = defMap.get(p.cargoDefId)
-      if (!def) continue
-      const result = voxelizeCargo(def, p.positionCm, p.rotationDeg)
-      fillFromResult(grid, result, p.instanceId)
-    }
-
-    historyManager.clear()
-
-    const analytics = recomputeAnalyticsSync(data.placements, data.cargoDefs, data.container)
-
+    session.loadFromData(data)
+    const analytics = recomputeAnalyticsSync(session.placements, session.cargoDefs, session.container)
     set((state) => ({
-      container: data.container,
-      cargoDefs: data.cargoDefs,
-      placements: data.placements,
-      nextInstanceId: data.nextInstanceId,
-      stagedItems: data.stagedItems ?? [],
+      container: session.container,
+      cargoDefs: [...session.cargoDefs],
+      placements: [...session.placements],
+      nextInstanceId: session.nextInstanceId,
+      stagedItems: [...session.stagedItems],
       autoPackFailures: [],
       selectedInstanceId: null,
       dragState: null,
@@ -808,119 +454,80 @@ export const useAppStore = create<AppState>((set, get) => ({
   canUndo: false,
   canRedo: false,
   undo: () => {
-    const grid = getVoxelGrid()
-    const command = historyManager.undo(grid)
-    if (!command) return
-
-    const state = get()
-    let newPlacements: PlacedCargo[]
-
-    if (command instanceof PlaceCommand) {
-      newPlacements = state.placements.filter((p) => p.instanceId !== command.instanceId)
-    } else if (command instanceof RemoveCommand) {
-      newPlacements = [...state.placements, command.placement]
-    } else if (command instanceof MoveCommand) {
-      newPlacements = state.placements.map((p) =>
-        p.instanceId === command.instanceId ? command.oldPlacement : p,
-      )
-    } else if (command instanceof RotateCommand) {
-      newPlacements = state.placements.map((p) =>
-        p.instanceId === command.instanceId ? command.oldPlacement : p,
-      )
-    } else if (command instanceof RepackCommand) {
-      newPlacements = state.placements
-        .filter((p) => !command.added.some((a) => a.placement.instanceId === p.instanceId))
-      newPlacements = [...newPlacements, ...command.removed.map((r) => r.placement)]
-    } else if (command instanceof BatchCommand) {
-      newPlacements = state.placements.filter((p) =>
-        !command.commands.some((c) => c.placement.instanceId === p.instanceId)
-      )
-    } else {
-      return
-    }
-
-    set({
-      placements: newPlacements,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
+    const result = session.undo()
+    if (!result.success) return
+    syncFromSession(set, get)
   },
   redo: () => {
+    const result = session.redo()
+    if (!result.success) return
+    syncFromSession(set, get)
+  },
+
+  // --- Helpers for UI ---
+
+  canMoveTo: (instanceId, newPosition) => {
     const grid = getVoxelGrid()
-    const command = historyManager.redo(grid)
-    if (!command) return
+    const placement = session.placements.find((p) => p.instanceId === instanceId)
+    if (!placement) return false
+    const def = session.cargoDefs.find((d) => d.id === placement.cargoDefId)
+    if (!def) return false
 
-    const state = get()
-    let newPlacements: PlacedCargo[]
+    const pos = { x: Math.round(newPosition.x), y: Math.round(newPosition.y), z: Math.round(newPosition.z) }
 
-    if (command instanceof PlaceCommand) {
-      newPlacements = [...state.placements, command.placement]
-    } else if (command instanceof RemoveCommand) {
-      newPlacements = state.placements.filter((p) => p.instanceId !== command.instanceId)
-    } else if (command instanceof MoveCommand) {
-      newPlacements = state.placements.map((p) =>
-        p.instanceId === command.instanceId ? command.placement : p,
-      )
-    } else if (command instanceof RotateCommand) {
-      newPlacements = state.placements.map((p) =>
-        p.instanceId === command.instanceId ? command.placement : p,
-      )
-    } else if (command instanceof RepackCommand) {
-      newPlacements = state.placements
-        .filter((p) => !command.removed.some((r) => r.placement.instanceId === p.instanceId))
-      newPlacements = [...newPlacements, ...command.added.map((a) => a.placement)]
-    } else if (command instanceof BatchCommand) {
-      const addedPlacements = command.commands.map((c) => c.placement)
-      newPlacements = [...state.placements, ...addedPlacements]
-    } else {
-      return
+    const result = def.blocks
+      ? voxelizeComposite(def.blocks, pos, placement.rotationDeg)
+      : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, placement.rotationDeg)
+
+    const { min, max } = result.aabb
+    if (min.x < 0 || min.y < 0 || min.z < 0) return false
+    if (max.x > grid.width || max.y > grid.height || max.z > grid.depth) return false
+
+    if (result.usesFastPath) {
+      for (let z = min.z; z < max.z; z++)
+        for (let y = min.y; y < max.y; y++)
+          for (let x = min.x; x < max.x; x++) {
+            const val = grid.get(x, y, z)
+            if (val !== 0 && val !== instanceId) return false
+          }
+      return true
+    }
+    return !grid.hasCollision(result.voxels, instanceId)
+  },
+
+  findPlacementPosition: (cargoDefId) => {
+    const def = session.cargoDefs.find((d) => d.id === cargoDefId)
+    if (!def) return null
+
+    const noFlipOrientations: Vec3[] = [
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 90, z: 0 },
+    ]
+    const orientations = def.noFlip ? noFlipOrientations : ORIENTATIONS
+
+    const seen = new Set<string>()
+    const candidates: { rot: Vec3; effW: number; effH: number; effD: number; offsetX: number; offsetY: number; offsetZ: number }[] = []
+    for (const rot of orientations) {
+      const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, { x: 0, y: 0, z: 0 }, rot)
+      const effW = aabb.max.x - aabb.min.x
+      const effH = aabb.max.y - aabb.min.y
+      const effD = aabb.max.z - aabb.min.z
+      const key = `${effW},${effH},${effD}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      candidates.push({ rot, effW, effH, effD, offsetX: -aabb.min.x, offsetY: -aabb.min.y, offsetZ: -aabb.min.z })
     }
 
-    set({
-      placements: newPlacements,
-      canUndo: historyManager.canUndo,
-      canRedo: historyManager.canRedo,
-      renderVersion: state.renderVersion + 1,
-    })
-    scheduleAnalytics()
-  },
-}))
-
-/** Voxelize a cargo item, using composite path for shapes with blocks */
-function voxelizeCargo(def: CargoItemDef, pos: Vec3, rot: Vec3): VoxelizeResult {
-  if (def.blocks) {
-    return voxelizeComposite(def.blocks, pos, rot)
-  }
-  return voxelize(def.widthCm, def.heightCm, def.depthCm, pos, rot)
-}
-
-// Helper: fill/clear voxels from VoxelizeResult
-function fillFromResult(grid: VoxelGrid, result: VoxelizeResult, id: number): void {
-  if (result.usesFastPath) {
-    const { min, max } = result.aabb
-    grid.fillBox(min.x, min.y, min.z, max.x - 1, max.y - 1, max.z - 1, id)
-  } else {
-    grid.fillVoxels(result.voxels, id)
-  }
-}
-
-function checkCollision(grid: VoxelGrid, result: VoxelizeResult, excludeId: number): boolean {
-  if (result.usesFastPath) {
-    const { min, max } = result.aabb
-    // Generate voxels for collision check
-    for (let z = min.z; z < max.z; z++) {
-      for (let y = min.y; y < max.y; y++) {
-        for (let x = min.x; x < max.x; x++) {
-          if (!grid.isInBounds(x, y, z)) return true
-          const val = grid.get(x, y, z)
-          if (val !== 0 && val !== excludeId) return true
+    const map = OccupancyMap.fromPlacements(session.placements, session.cargoDefs, session.container)
+    for (const c of candidates) {
+      const position = map.findPosition(c.effW, c.effH, c.effD)
+      if (position) {
+        return {
+          position: { x: position.x + c.offsetX, y: position.y + c.offsetY, z: position.z + c.offsetZ },
+          rotation: c.rot,
         }
       }
     }
-    return false
-  } else {
-    return grid.hasCollision(result.voxels, excludeId)
-  }
-}
+    return null
+  },
+}))
