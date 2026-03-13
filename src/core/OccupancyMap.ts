@@ -102,8 +102,17 @@ export class OccupancyMap {
     return bestPos
   }
 
+  /** Seal the height map: raise all cells to at least minY. Existing higher cells are kept. */
+  sealToHeight(minY: number): void {
+    for (let i = 0; i < this.heightMap.length; i++) {
+      if (this.heightMap[i]! < minY) {
+        this.heightMap[i] = minY
+      }
+    }
+  }
+
   /** Find multiple feasible candidate positions (ordered by X asc, then Y asc, then Z asc). */
-  findCandidatePositions(w: number, h: number, d: number, maxCandidates = 12): Vec3[] {
+  findCandidatePositions(w: number, h: number, d: number, maxCandidates = 12, yMax?: number): Vec3[] {
     const cs = this.cellSize
     const itemCellsW = Math.ceil(w / cs)
     const itemCellsD = Math.ceil(d / cs)
@@ -121,7 +130,7 @@ export class OccupancyMap {
 
         const xPos = cx * cs
         const zPos = cz * cs
-        if (maxH + h > this.containerH) continue
+        if (maxH + h > (yMax ?? this.containerH)) continue
         if (xPos + w > this.containerW || zPos + d > this.containerD) continue
 
         candidates.push({ x: xPos, y: maxH, z: zPos })

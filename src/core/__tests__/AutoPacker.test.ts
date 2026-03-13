@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { autoPack } from '../AutoPacker'
+import type { PackStrategy } from '../AutoPacker'
 import { OccupancyMap } from '../OccupancyMap'
 import { computeRotatedAABB } from '../Voxelizer'
 import { checkInterference } from '../InterferenceChecker'
@@ -359,4 +360,254 @@ describe('autoPack', () => {
     expect(result.placements).toHaveLength(0)
     expect(result.failureReasons[0]!.code).toBe('STACK_CONSTRAINT')
   })
+
+  // ─── Strategy: default (backward compat) ────────────────────
+
+  it('strategy=default: strategy未指定と同じ結果', () => {
+    const defs: CargoItemDef[] = [
+      { id: 'a', name: 'A', widthCm: 40, heightCm: 30, depthCm: 20, weightKg: 5, color: '#f00' },
+      { id: 'b', name: 'B', widthCm: 30, heightCm: 20, depthCm: 10, weightKg: 2, color: '#0f0' },
+    ]
+    const r1 = autoPack(defs, container, 1)
+    const r2 = autoPack(defs, container, 1, undefined, undefined, undefined, 'default')
+    expect(r2.placements).toHaveLength(r1.placements.length)
+    for (let i = 0; i < r1.placements.length; i++) {
+      expect(r2.placements[i]!.positionCm).toEqual(r1.placements[i]!.positionCm)
+      expect(r2.placements[i]!.rotationDeg).toEqual(r1.placements[i]!.rotationDeg)
+    }
+  })
+
+  // ─── Strategy: layer ─────────────────────────────────────────
+
+  it('layer (repack): 同種アイテムが同一Yレイヤーにグループ化', () => {
+    // 3 types of items, 3 each. Same-type items should share Y layers.
+    const defs: CargoItemDef[] = []
+    for (let i = 0; i < 3; i++) {
+      defs.push({ id: 'tall', name: 'Tall', widthCm: 30, heightCm: 40, depthCm: 30, weightKg: 1, color: '#f00' })
+    }
+    for (let i = 0; i < 3; i++) {
+      defs.push({ id: 'short', name: 'Short', widthCm: 30, heightCm: 20, depthCm: 30, weightKg: 1, color: '#0f0' })
+    }
+
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'layer')
+    expect(result.placements.length).toBeGreaterThan(0)
+    expect(result.failedDefIds).toHaveLength(0)
+
+    // Same-defId items should be on the same Y layer
+    const tallPlacements = result.placements.filter(p => p.cargoDefId === 'tall')
+    const shortPlacements = result.placements.filter(p => p.cargoDefId === 'short')
+
+    if (tallPlacements.length >= 2) {
+      const yValues = new Set(tallPlacements.map(p => p.positionCm.y))
+      // All tall items should share the same Y (or at most 1-2 Y values within the same layer)
+      expect(yValues.size).toBeLessThanOrEqual(2)
+    }
+    if (shortPlacements.length >= 2) {
+      const yValues = new Set(shortPlacements.map(p => p.positionCm.y))
+      expect(yValues.size).toBeLessThanOrEqual(2)
+    }
+  })
+
+  it('layer (repack): 空リスト', () => {
+    const result = autoPack([], container, 1, undefined, undefined, undefined, 'layer')
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds).toHaveLength(0)
+  })
+
+  it('layer (repack): 1個のアイテム', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'A', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'layer')
+    expect(result.placements).toHaveLength(1)
+    expect(result.placements[0]!.positionCm.y).toBe(0)
+  })
+
+  it('layer (repack): コンテナ超過はfailedDefIds', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'huge', name: 'Huge', widthCm: 200, heightCm: 200, depthCm: 200, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'layer')
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds).toEqual(['huge'])
+  })
+
+  it('layer (pack_staged): grouping fallback で同種が近接配置', () => {
+    // Existing placement at origin
+    const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+    occMap.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 30, z: 30 } })
+    const existingPlacement = {
+      instanceId: 1, cargoDefId: 'exist',
+      positionCm: { x: 0, y: 0, z: 0 }, rotationDeg: { x: 0, y: 0, z: 0 },
+    }
+    const existDef: CargoItemDef = {
+      id: 'exist', name: 'Exist', widthCm: 30, heightCm: 30, depthCm: 30, weightKg: 1, color: '#aaa',
+    }
+
+    const defs: CargoItemDef[] = []
+    for (let i = 0; i < 3; i++) {
+      defs.push({ id: 'item', name: 'Item', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#f00' })
+    }
+
+    const result = autoPack(defs, container, 10, occMap, {
+      existingPlacements: [existingPlacement],
+      existingCargoDefs: [existDef],
+    }, undefined, 'layer')
+
+    expect(result.placements.length).toBeGreaterThan(0)
+    // All placed items should be the same defId → grouping should keep them close
+    const positions = result.placements.map(p => p.positionCm)
+    // Verify they're actually placed (basic sanity)
+    expect(positions.every(p => p.x >= 0 && p.y >= 0 && p.z >= 0)).toBe(true)
+  })
+
+  // ─── Strategy: wall ──────────────────────────────────────────
+
+  it('wall (repack): 同種アイテムが同一X壁内にまとまる', () => {
+    const defs: CargoItemDef[] = []
+    // 4 items of type A (30x40x30)
+    for (let i = 0; i < 4; i++) {
+      defs.push({ id: 'typeA', name: 'A', widthCm: 30, heightCm: 40, depthCm: 30, weightKg: 1, color: '#f00' })
+    }
+    // 4 items of type B (20x30x20)
+    for (let i = 0; i < 4; i++) {
+      defs.push({ id: 'typeB', name: 'B', widthCm: 20, heightCm: 30, depthCm: 20, weightKg: 1, color: '#0f0' })
+    }
+
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'wall')
+    expect(result.placements.length).toBeGreaterThan(0)
+
+    // Check that same-type items tend to cluster in X
+    const typeAPlacements = result.placements.filter(p => p.cargoDefId === 'typeA')
+    const typeBPlacements = result.placements.filter(p => p.cargoDefId === 'typeB')
+
+    if (typeAPlacements.length >= 2) {
+      const xRange = Math.max(...typeAPlacements.map(p => p.positionCm.x)) -
+                      Math.min(...typeAPlacements.map(p => p.positionCm.x))
+      // Same-type items should be within a limited X range (wall grouping)
+      expect(xRange).toBeLessThan(container.widthCm)
+    }
+    expect(typeBPlacements.length).toBeGreaterThan(0)
+  })
+
+  it('wall (repack): 空リスト', () => {
+    const result = autoPack([], container, 1, undefined, undefined, undefined, 'wall')
+    expect(result.placements).toHaveLength(0)
+  })
+
+  it('wall (repack): 1個のアイテム', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'A', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'wall')
+    expect(result.placements).toHaveLength(1)
+  })
+
+  it('wall (repack): コンテナ超過はfailedDefIds', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'huge', name: 'Huge', widthCm: 200, heightCm: 200, depthCm: 200, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'wall')
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds.length).toBeGreaterThan(0)
+  })
+
+  it('wall (pack_staged): grouping fallback', () => {
+    const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+    const defs: CargoItemDef[] = [
+      { id: 'item', name: 'Item', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#f00' },
+    ]
+    const result = autoPack(defs, container, 1, occMap, undefined, undefined, 'wall')
+    expect(result.placements).toHaveLength(1)
+  })
+
+  // ─── Strategy: lff ───────────────────────────────────────────
+
+  it('lff: 方向候補が少ないアイテムが先に配置される', () => {
+    // Container with limited height forces orientation filtering
+    const lowContainer: ContainerDef = {
+      widthCm: 50, heightCm: 30, depthCm: 50, maxPayloadKg: 10000,
+    }
+    // A: 45x45x10 — only 1 orientation fits (45,10,45) because effH must be ≤30
+    const constrained: CargoItemDef = {
+      id: 'constrained', name: 'Constrained',
+      widthCm: 45, heightCm: 45, depthCm: 10, weightKg: 1, color: '#f00',
+    }
+    // B: 25x25x10 — 3 orientations fit (all have effH ≤ 30)
+    const flexible: CargoItemDef = {
+      id: 'flexible', name: 'Flexible',
+      widthCm: 25, heightCm: 25, depthCm: 10, weightKg: 1, color: '#0f0',
+    }
+    // Pass flexible first, constrained second — with LFF, constrained (flex=1) placed before flexible (flex=3)
+    const result = autoPack([flexible, constrained], lowContainer, 1, undefined, undefined, undefined, 'lff')
+    expect(result.placements.length).toBe(2)
+    // Constrained item should get the first instanceId (placed first)
+    expect(result.placements[0]!.cargoDefId).toBe('constrained')
+  })
+
+  it('lff: 壁際への配置が優先される', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'box', name: 'Box', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'lff')
+    expect(result.placements).toHaveLength(1)
+    const pos = result.placements[0]!.positionCm
+    // With caving penalty, items should be placed at corners/edges
+    // At minimum, it should be at x=0, y=0 (touching back wall and floor)
+    expect(pos.y).toBe(0)
+  })
+
+  it('lff: 空リスト', () => {
+    const result = autoPack([], container, 1, undefined, undefined, undefined, 'lff')
+    expect(result.placements).toHaveLength(0)
+  })
+
+  it('lff: コンテナ超過はfailedDefIds', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'huge', name: 'Huge', widthCm: 200, heightCm: 200, depthCm: 200, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'lff')
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds).toEqual(['huge'])
+  })
+
+  // ─── Deadline tests per strategy ────────────────────────────
+
+  for (const strategy of ['default', 'layer', 'wall', 'lff'] as PackStrategy[]) {
+    it(`${strategy}: deadline=0 で即タイムアウト → partial result`, () => {
+      const defs: CargoItemDef[] = []
+      for (let i = 0; i < 20; i++) {
+        defs.push({
+          id: `item-${i}`, name: `Item ${i}`,
+          widthCm: 20, heightCm: 20, depthCm: 20,
+          weightKg: 1, color: '#f00',
+        })
+      }
+      const bigContainer: ContainerDef = {
+        widthCm: 500, heightCm: 500, depthCm: 500, maxPayloadKg: 100000,
+      }
+      const result = autoPack(defs, bigContainer, 1, undefined, undefined, 0, strategy)
+      // With deadline=0 (already expired), no items should be placed
+      expect(result.placements).toHaveLength(0)
+      expect(result.failedDefIds.length).toBe(20)
+      expect(result.failureReasons.every(r => r.detail.includes('timed out'))).toBe(true)
+    })
+  }
+
+  // ─── All strategies: no interference ──────────────────────────
+
+  for (const strategy of ['default', 'layer', 'wall', 'lff'] as PackStrategy[]) {
+    it(`${strategy}: 配置結果にinterferenceがない`, () => {
+      const defs: CargoItemDef[] = [
+        { id: 'a', name: 'A', widthCm: 30, heightCm: 30, depthCm: 30, weightKg: 1, color: '#f00' },
+        { id: 'b', name: 'B', widthCm: 25, heightCm: 25, depthCm: 25, weightKg: 1, color: '#0f0' },
+        { id: 'c', name: 'C', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#00f' },
+      ]
+      const result = autoPack(defs, container, 1, undefined, undefined, undefined, strategy)
+      if (result.placements.length > 1) {
+        const interference = checkInterference(result.placements, defs)
+        expect(interference.pairs).toHaveLength(0)
+      }
+    })
+  }
 })

@@ -61,6 +61,11 @@ export const ja: TranslationDict = {
     repackAll: '全再配置',
     clearStage: 'ステージクリア',
     confirmRepack: '既存の配置をすべてクリアして再配置します。続行しますか？',
+    strategy: '戦略',
+    strategyDefault: 'デフォルト',
+    strategyLayer: 'レイヤー',
+    strategyWall: 'ウォール',
+    strategyLff: 'LFF',
   },
   placement: {
     selectCargo: '貨物を選択してください',

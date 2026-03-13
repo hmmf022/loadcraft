@@ -1,7 +1,10 @@
 import { useAppStore } from '../state/store'
 import { useTranslation } from '../i18n'
 import type { PackFailureCode } from '../core/AutoPacker'
+import type { PackStrategy } from '../core/AutoPacker'
 import styles from './StagingPanel.module.css'
+
+const STRATEGY_OPTIONS: PackStrategy[] = ['default', 'layer', 'wall', 'lff']
 
 export function StagingPanel() {
   const stagedItems = useAppStore((s) => s.stagedItems)
@@ -12,6 +15,8 @@ export function StagingPanel() {
   const autoPackCargo = useAppStore((s) => s.autoPackCargo)
   const autoPackFailures = useAppStore((s) => s.autoPackFailures)
   const placements = useAppStore((s) => s.placements)
+  const packStrategy = useAppStore((s) => s.packStrategy)
+  const setPackStrategy = useAppStore((s) => s.setPackStrategy)
   const { t } = useTranslation()
 
   const getFailureLabel = (code: PackFailureCode): string => {
@@ -22,9 +27,16 @@ export function StagingPanel() {
     return t.packFailure.stackConstraint
   }
 
+  const strategyLabel = (s: PackStrategy): string => {
+    if (s === 'default') return t.staging.strategyDefault
+    if (s === 'layer') return t.staging.strategyLayer
+    if (s === 'wall') return t.staging.strategyWall
+    return t.staging.strategyLff
+  }
+
   const handleRepackAll = () => {
     if (placements.length > 0 && !confirm(t.staging.confirmRepack)) return
-    autoPackCargo('repack')
+    autoPackCargo('repack', packStrategy)
   }
 
   const handleDragStart = (e: React.DragEvent, cargoDefId: string) => {
@@ -78,10 +90,22 @@ export function StagingPanel() {
           )
         })
       )}
+      <div className={styles.strategyRow}>
+        <span className={styles.strategyLabel}>{t.staging.strategy}</span>
+        <select
+          className={styles.strategySelect}
+          value={packStrategy}
+          onChange={(e) => setPackStrategy(e.target.value as PackStrategy)}
+        >
+          {STRATEGY_OPTIONS.map((s) => (
+            <option key={s} value={s}>{strategyLabel(s)}</option>
+          ))}
+        </select>
+      </div>
       <div className={styles.actions}>
         <button
           className={styles.packButton}
-          onClick={() => autoPackCargo('packStaged')}
+          onClick={() => autoPackCargo('packStaged', packStrategy)}
           disabled={stagedItems.length === 0}
         >
           {t.staging.packStaged}

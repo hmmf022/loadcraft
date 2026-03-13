@@ -3,7 +3,7 @@ import { CONTAINER_PRESETS } from '../core/types.js'
 import { VoxelGrid } from '../core/VoxelGrid.js'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History.js'
 import { autoPack } from '../core/AutoPacker.js'
-import type { PackFailureReason } from '../core/AutoPacker.js'
+import type { PackFailureReason, PackStrategy } from '../core/AutoPacker.js'
 import { checkInterference } from '../core/InterferenceChecker.js'
 import type { InterferencePair } from '../core/InterferenceChecker.js'
 import { checkStackConstraints } from '../core/StackChecker.js'
@@ -373,6 +373,7 @@ export class SimulatorSession {
   autoPackCargo(
     mode: AutoPackMode = 'packStaged',
     deadlineMs?: number,
+    strategy: PackStrategy = 'default',
   ): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
     if (mode === 'repack') {
       const allItems: CargoItemDef[] = []
@@ -408,7 +409,7 @@ export class SimulatorSession {
         removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
       }
 
-      const result = autoPack(allItems, this.container, this.nextInstanceId, undefined, undefined, deadlineMs)
+      const result = autoPack(allItems, this.container, this.nextInstanceId, undefined, undefined, deadlineMs, strategy)
 
       if (result.placements.length === 0) {
         return {
@@ -433,7 +434,24 @@ export class SimulatorSession {
         (mx, p) => Math.max(mx, p.instanceId), this.nextInstanceId,
       )
       this.nextInstanceId = maxInstanceId + 1
+
+      // Restage items that failed to place
+      const placedCountByDef = new Map<string, number>()
+      for (const p of result.placements) {
+        placedCountByDef.set(p.cargoDefId, (placedCountByDef.get(p.cargoDefId) ?? 0) + 1)
+      }
+      const allCountByDef = new Map<string, number>()
+      for (const item of allItems) {
+        allCountByDef.set(item.id, (allCountByDef.get(item.id) ?? 0) + 1)
+      }
       this.stagedItems = []
+      for (const [defId, totalCount] of allCountByDef) {
+        const placed = placedCountByDef.get(defId) ?? 0
+        const remaining = totalCount - placed
+        if (remaining > 0) {
+          this.stagedItems.push({ cargoDefId: defId, count: remaining })
+        }
+      }
 
       return {
         success: true,
@@ -473,7 +491,7 @@ export class SimulatorSession {
       const result = autoPack(items, this.container, this.nextInstanceId, occMap, {
         existingPlacements: this.placements,
         existingCargoDefs: this.cargoDefs,
-      }, deadlineMs)
+      }, deadlineMs, strategy)
 
       if (result.placements.length === 0) {
         return {

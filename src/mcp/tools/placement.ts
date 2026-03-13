@@ -169,11 +169,13 @@ export function registerPlacementTools(server: McpServer, session: SimulatorSess
     {
       mode: z.enum(['repack', 'pack_staged']).default('pack_staged').describe('Pack mode: "repack" or "pack_staged"'),
       timeout_ms: z.number().int().min(1000).max(120000).default(30000).describe('Timeout in milliseconds (default 30s, max 120s)'),
+      strategy: z.enum(['default', 'layer', 'wall', 'lff']).default('default')
+        .describe('Packing strategy: "default" (volume-first), "layer" (horizontal layers, groups same items), "wall" (vertical walls from back), "lff" (less-flexibility-first, corner-seeking)'),
     },
     async (args) => {
       const mode = args.mode === 'repack' ? 'repack' : 'packStaged'
       const deadline = Date.now() + args.timeout_ms
-      const result = session.autoPackCargo(mode, deadline)
+      const result = session.autoPackCargo(mode, deadline, args.strategy)
       if (!result.success) {
         return {
           content: [{

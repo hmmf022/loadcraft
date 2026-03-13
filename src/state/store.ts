@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView, WeightResult, StagedItem, AutoPackMode } from '../core/types'
+import type { PackStrategy } from '../core/AutoPacker'
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History'
@@ -25,6 +26,8 @@ import { tryKick } from '../core/WallKick'
 
 const defaultContainer = CONTAINER_PRESETS[0]!
 const historyManager = new HistoryManager(100)
+const AUTO_PACK_BASE_MS = 15_000
+const AUTO_PACK_PER_ITEM_MS = 500
 
 const initialWeightResult: WeightResult = {
   totalWeightKg: 0,
@@ -53,7 +56,11 @@ export interface AppState {
   moveCargo: (instanceId: number, newPosition: Vec3) => void
   rotateCargo: (instanceId: number, newRotation: Vec3) => void
   dropCargo: (instanceId: number) => void
-  autoPackCargo: (mode: AutoPackMode) => void
+  autoPackCargo: (mode: AutoPackMode, strategy?: PackStrategy) => void
+
+  // Pack strategy
+  packStrategy: PackStrategy
+  setPackStrategy: (strategy: PackStrategy) => void
 
   // Staging
   stagedItems: StagedItem[]
@@ -474,7 +481,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     state.moveCargo(instanceId, { x: pos.x, y: bestY, z: pos.z })
   },
 
-  autoPackCargo: (mode: AutoPackMode) => {
+  autoPackCargo: (mode: AutoPackMode, strategy: PackStrategy = 'default') => {
     const state = get()
     const tt = getTranslation()
     const grid = getVoxelGrid()
@@ -511,7 +518,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
       }
 
-      const result = autoPack(allItems, state.container, state.nextInstanceId)
+      const deadline = Date.now() + Math.max(AUTO_PACK_BASE_MS, allItems.length * AUTO_PACK_PER_ITEM_MS)
+      const result = autoPack(allItems, state.container, state.nextInstanceId, undefined, undefined, deadline, strategy)
 
       if (result.placements.length === 0) {
         set({ autoPackFailures: result.failureReasons })
@@ -532,10 +540,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         (mx, p) => Math.max(mx, p.instanceId), state.nextInstanceId,
       )
 
+      // Restage items that failed to place
+      const placedCountByDef = new Map<string, number>()
+      for (const p of result.placements) {
+        placedCountByDef.set(p.cargoDefId, (placedCountByDef.get(p.cargoDefId) ?? 0) + 1)
+      }
+      const allCountByDef = new Map<string, number>()
+      for (const item of allItems) {
+        allCountByDef.set(item.id, (allCountByDef.get(item.id) ?? 0) + 1)
+      }
+      const newStaged: StagedItem[] = []
+      for (const [defId, totalCount] of allCountByDef) {
+        const placed = placedCountByDef.get(defId) ?? 0
+        const remaining = totalCount - placed
+        if (remaining > 0) {
+          newStaged.push({ cargoDefId: defId, count: remaining })
+        }
+      }
+
       set({
         placements: result.placements,
         nextInstanceId: maxInstanceId + 1,
-        stagedItems: [],
+        stagedItems: newStaged,
         autoPackFailures: result.failureReasons,
         canUndo: historyManager.canUndo,
         canRedo: historyManager.canRedo,
@@ -572,10 +598,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       const occMap = OccupancyMap.fromPlacements(state.placements, state.cargoDefs, state.container)
+      const deadline = Date.now() + Math.max(AUTO_PACK_BASE_MS, items.length * AUTO_PACK_PER_ITEM_MS)
       const result = autoPack(items, state.container, state.nextInstanceId, occMap, {
         existingPlacements: state.placements,
         existingCargoDefs: state.cargoDefs,
-      })
+      }, deadline, strategy)
 
       if (result.placements.length === 0) {
         set({ autoPackFailures: result.failureReasons })
@@ -630,6 +657,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
   },
+
+  // Pack strategy
+  packStrategy: 'default' as PackStrategy,
+  setPackStrategy: (strategy: PackStrategy) => set({ packStrategy: strategy }),
 
   // Staging
   stagedItems: [],

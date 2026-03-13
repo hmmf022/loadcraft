@@ -61,6 +61,11 @@ export interface TranslationDict {
     repackAll: string
     clearStage: string
     confirmRepack: string
+    strategy: string
+    strategyDefault: string
+    strategyLayer: string
+    strategyWall: string
+    strategyLff: string
   }
   placement: {
     selectCargo: string
