@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraView, WeightResult, StagedItem, AutoPackMode } from '../core/types'
-import type { PackStrategy } from '../core/AutoPacker'
 import { CONTAINER_PRESETS } from '../core/types'
 import { getVoxelGrid, createVoxelGrid } from '../core/voxelGridSingleton'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History'
@@ -56,11 +55,7 @@ export interface AppState {
   moveCargo: (instanceId: number, newPosition: Vec3) => void
   rotateCargo: (instanceId: number, newRotation: Vec3) => void
   dropCargo: (instanceId: number) => void
-  autoPackCargo: (mode: AutoPackMode, strategy?: PackStrategy) => void
-
-  // Pack strategy
-  packStrategy: PackStrategy
-  setPackStrategy: (strategy: PackStrategy) => void
+  autoPackCargo: (mode: AutoPackMode) => void
 
   // Staging
   stagedItems: StagedItem[]
@@ -481,7 +476,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     state.moveCargo(instanceId, { x: pos.x, y: bestY, z: pos.z })
   },
 
-  autoPackCargo: (mode: AutoPackMode, strategy: PackStrategy = 'default') => {
+  autoPackCargo: (mode: AutoPackMode) => {
     const state = get()
     const tt = getTranslation()
     const grid = getVoxelGrid()
@@ -519,7 +514,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       const deadline = Date.now() + Math.max(AUTO_PACK_BASE_MS, allItems.length * AUTO_PACK_PER_ITEM_MS)
-      const result = autoPack(allItems, state.container, state.nextInstanceId, undefined, undefined, deadline, strategy)
+      const result = autoPack(allItems, state.container, state.nextInstanceId, undefined, undefined, deadline, 'default')
 
       if (result.placements.length === 0) {
         set({ autoPackFailures: result.failureReasons })
@@ -602,7 +597,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = autoPack(items, state.container, state.nextInstanceId, occMap, {
         existingPlacements: state.placements,
         existingCargoDefs: state.cargoDefs,
-      }, deadline, strategy)
+      }, deadline, 'default')
 
       if (result.placements.length === 0) {
         set({ autoPackFailures: result.failureReasons })
@@ -657,10 +652,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
   },
-
-  // Pack strategy
-  packStrategy: 'default' as PackStrategy,
-  setPackStrategy: (strategy: PackStrategy) => set({ packStrategy: strategy }),
 
   // Staging
   stagedItems: [],

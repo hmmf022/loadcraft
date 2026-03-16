@@ -3,7 +3,7 @@ import { CONTAINER_PRESETS } from '../core/types.js'
 import { VoxelGrid } from '../core/VoxelGrid.js'
 import { HistoryManager, PlaceCommand, RemoveCommand, MoveCommand, RotateCommand, RepackCommand, BatchCommand } from '../core/History.js'
 import { autoPack } from '../core/AutoPacker.js'
-import type { PackFailureReason, PackStrategy } from '../core/AutoPacker.js'
+import type { PackFailureReason } from '../core/AutoPacker.js'
 import { checkInterference } from '../core/InterferenceChecker.js'
 import type { InterferencePair } from '../core/InterferenceChecker.js'
 import { checkStackConstraints } from '../core/StackChecker.js'
@@ -373,7 +373,6 @@ export class SimulatorSession {
   autoPackCargo(
     mode: AutoPackMode = 'packStaged',
     deadlineMs?: number,
-    strategy: PackStrategy = 'default',
   ): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
     if (mode === 'repack') {
       const allItems: CargoItemDef[] = []
@@ -409,7 +408,7 @@ export class SimulatorSession {
         removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
       }
 
-      const result = autoPack(allItems, this.container, this.nextInstanceId, undefined, undefined, deadlineMs, strategy)
+      const result = autoPack(allItems, this.container, this.nextInstanceId, undefined, undefined, deadlineMs, 'default')
 
       if (result.placements.length === 0) {
         return {
@@ -491,7 +490,7 @@ export class SimulatorSession {
       const result = autoPack(items, this.container, this.nextInstanceId, occMap, {
         existingPlacements: this.placements,
         existingCargoDefs: this.cargoDefs,
-      }, deadlineMs, strategy)
+      }, deadlineMs, 'default')
 
       if (result.placements.length === 0) {
         return {
