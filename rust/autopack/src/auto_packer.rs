@@ -55,6 +55,17 @@ const LFF_WEIGHTS: ScoreWeights = ScoreWeights {
     caving: 1.5,
 };
 
+const EP_WEIGHTS: ScoreWeights = ScoreWeights {
+    floor: 1.2,
+    back_wall: 1.0,
+    side: 0.9,
+    support: 0.6,
+    rotation: 0.2,
+    cog: 0.05,
+    grouping: 0.0,
+    caving: 1.0,
+};
+
 // ─── Constants ──────────────────────────────────────────────────
 
 /// 6 axis-aligned orientations covering all W×H×D permutations.
@@ -1388,6 +1399,476 @@ fn auto_pack_walled(
     }
 }
 
+// ─── Extreme Point helpers ───────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct ExtremePoint {
+    x: f64,
+    z: f64,
+    fixed_y: Option<f64>, // EP_top: Some(y), others: None (dynamic via get_stack_height)
+}
+
+struct ExtremePointSet {
+    points: Vec<ExtremePoint>,
+    container_w: f64,
+    container_h: f64,
+    container_d: f64,
+}
+
+impl ExtremePointSet {
+    fn new(container: &ContainerDef) -> Self {
+        Self {
+            points: vec![ExtremePoint {
+                x: 0.0,
+                z: 0.0,
+                fixed_y: None,
+            }],
+            container_w: container.width_cm,
+            container_h: container.height_cm,
+            container_d: container.depth_cm,
+        }
+    }
+
+    fn generate_from_placement(&mut self, aabb: &AABB) {
+        // EP_right
+        if aabb.max.x < self.container_w && aabb.min.z < self.container_d {
+            self.points.push(ExtremePoint {
+                x: aabb.max.x,
+                z: aabb.min.z,
+                fixed_y: None,
+            });
+        }
+        // EP_top
+        if aabb.min.x < self.container_w
+            && aabb.min.z < self.container_d
+            && aabb.max.y < self.container_h
+        {
+            self.points.push(ExtremePoint {
+                x: aabb.min.x,
+                z: aabb.min.z,
+                fixed_y: Some(aabb.max.y),
+            });
+        }
+        // EP_front
+        if aabb.min.x < self.container_w && aabb.max.z < self.container_d {
+            self.points.push(ExtremePoint {
+                x: aabb.min.x,
+                z: aabb.max.z,
+                fixed_y: None,
+            });
+        }
+    }
+
+    fn remove_inside_any_aabb(&mut self, aabbs: &[AABB]) {
+        self.points.retain(|ep| {
+            for a in aabbs {
+                if ep.x >= a.min.x && ep.x < a.max.x && ep.z >= a.min.z && ep.z < a.max.z {
+                    match ep.fixed_y {
+                        None => return false,
+                        Some(y) => {
+                            if y >= a.min.y && y < a.max.y {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            true
+        });
+    }
+
+    fn remove_dominated(&mut self) {
+        let n = self.points.len();
+        let mut dominated = vec![false; n];
+        for i in 0..n {
+            if dominated[i] {
+                continue;
+            }
+            for j in (i + 1)..n {
+                if dominated[j] {
+                    continue;
+                }
+                let a = &self.points[i];
+                let b = &self.points[j];
+                // a dominates b?
+                if a.x <= b.x && a.z <= b.z {
+                    match (a.fixed_y, b.fixed_y) {
+                        (None, None) => {
+                            dominated[j] = true;
+                            continue;
+                        }
+                        (Some(ay), Some(by)) if ay <= by => {
+                            dominated[j] = true;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                // b dominates a?
+                if b.x <= a.x && b.z <= a.z {
+                    match (a.fixed_y, b.fixed_y) {
+                        (None, None) => {
+                            dominated[i] = true;
+                            break;
+                        }
+                        (Some(ay), Some(by)) if by <= ay => {
+                            dominated[i] = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let mut idx = 0;
+        self.points.retain(|_| {
+            let keep = !dominated[idx];
+            idx += 1;
+            keep
+        });
+    }
+
+    fn get_candidates(&self) -> Vec<ExtremePoint> {
+        if self.points.len() <= 500 {
+            return self.points.clone();
+        }
+        let mut sorted = self.points.clone();
+        sorted.sort_by(|a, b| (a.x + a.z).partial_cmp(&(b.x + b.z)).unwrap());
+        sorted.truncate(500);
+        sorted
+    }
+}
+
+// ─── Extreme Point packing ──────────────────────────────────────
+
+fn auto_pack_extreme_point(
+    items: &[CargoItemDef],
+    container: &ContainerDef,
+    start_instance_id: u32,
+    base_occ_map: Option<&OccupancyMap>,
+    existing_placements: &[PlacedCargo],
+    existing_cargo_defs: &[CargoItemDef],
+    deadline: Option<Instant>,
+) -> PackResult {
+    let mut placements = Vec::new();
+    let mut failed_def_ids = Vec::new();
+    let mut failure_reasons = Vec::new();
+
+    let mut occ_map = match base_occ_map {
+        Some(base) => base.clone_map(),
+        None => OccupancyMap::new_default(
+            container.width_cm,
+            container.height_cm,
+            container.depth_cm,
+        ),
+    };
+
+    let mut next_id = start_instance_id;
+    let mut all_defs_vec: Vec<CargoItemDef> = existing_cargo_defs.to_vec();
+    all_defs_vec.extend_from_slice(items);
+    let all_defs = dedupe_defs(&all_defs_vec);
+    let mut placed_aabbs = build_aabb_list(existing_placements, &all_defs);
+
+    let has_any_stack_constraints = all_defs
+        .iter()
+        .any(|d| d.no_stack == Some(true) || d.max_stack_weight_kg.is_some());
+
+    let mut stack_ctx = if has_any_stack_constraints {
+        Some(build_stack_context(existing_placements, &all_defs))
+    } else {
+        None
+    };
+
+    let mut running_cog = RunningCog {
+        total_weight: 0.0,
+        cog_x: 0.0,
+        cog_y: 0.0,
+        cog_z: 0.0,
+    };
+
+    for p in existing_placements {
+        if let Some(def) = all_defs.iter().find(|d| d.id == p.cargo_def_id) {
+            let center = get_placement_center(p, def);
+            running_cog.total_weight += def.weight_kg;
+            running_cog.cog_x += center.x * def.weight_kg;
+            running_cog.cog_y += center.y * def.weight_kg;
+            running_cog.cog_z += center.z * def.weight_kg;
+        }
+    }
+
+    let mut orientation_cache: HashMap<String, Vec<OrientationCandidate>> = HashMap::new();
+
+    // ── EP set initialization ──
+    let mut ep_set = ExtremePointSet::new(container);
+
+    for p in existing_placements {
+        if let Some(def) = all_defs.iter().find(|d| d.id == p.cargo_def_id) {
+            let aabb = compute_cargo_aabb_for_placement(def, p.position_cm, p.rotation_deg);
+            ep_set.generate_from_placement(&aabb);
+        }
+    }
+    ep_set.remove_inside_any_aabb(&placed_aabbs);
+    ep_set.remove_dominated();
+
+    // ── Main loop ──
+    for def in items {
+        if let Some(dl) = deadline {
+            if Instant::now() > dl {
+                failed_def_ids.push(def.id.clone());
+                failure_reasons.push(PackFailureReason {
+                    cargo_def_id: def.id.clone(),
+                    cargo_name: def.name.clone(),
+                    code: PackFailureCode::NoFeasiblePosition,
+                    detail: "Auto-pack timed out.".to_string(),
+                });
+                continue;
+            }
+        }
+
+        let cached_orientations = orientation_cache
+            .entry(def.id.clone())
+            .or_insert_with(|| get_orientation_candidates(def));
+
+        let mut scored_list: Vec<ScoredCandidate> = Vec::new();
+        let mut had_orientation_fit = false;
+        let mut had_candidate_position = false;
+        let mut had_out_of_bounds = false;
+        let mut had_collision = false;
+        let mut had_no_support = false;
+        let mut had_stack_constraint = false;
+
+        let ep_candidates = ep_set.get_candidates();
+
+        for c in cached_orientations.iter() {
+            if c.eff_w > container.width_cm
+                || c.eff_h > container.height_cm
+                || c.eff_d > container.depth_cm
+            {
+                continue;
+            }
+            had_orientation_fit = true;
+
+            for ep in &ep_candidates {
+                let base_y = match ep.fixed_y {
+                    Some(y) => y,
+                    None => occ_map.get_stack_height(ep.x, ep.z, c.eff_w, c.eff_d),
+                };
+
+                if base_y + c.eff_h > container.height_cm {
+                    continue;
+                }
+                had_candidate_position = true;
+
+                let mut pos = Vec3::new(
+                    ep.x + c.offset_x,
+                    base_y + c.offset_y,
+                    ep.z + c.offset_z,
+                );
+                let mut aabb = compute_cargo_aabb_for_placement(def, pos, c.rot);
+
+                // Bounds correction
+                let mut dx = 0.0_f64;
+                let mut dy = 0.0_f64;
+                let mut dz = 0.0_f64;
+                if aabb.min.x < 0.0 {
+                    dx = -aabb.min.x;
+                }
+                if aabb.min.y < 0.0 {
+                    dy = -aabb.min.y;
+                }
+                if aabb.min.z < 0.0 {
+                    dz = -aabb.min.z;
+                }
+                if aabb.max.x > container.width_cm {
+                    dx = container.width_cm - aabb.max.x;
+                }
+                if aabb.max.y > container.height_cm {
+                    dy = container.height_cm - aabb.max.y;
+                }
+                if aabb.max.z > container.depth_cm {
+                    dz = container.depth_cm - aabb.max.z;
+                }
+                if dx != 0.0 || dy != 0.0 || dz != 0.0 {
+                    pos = Vec3::new(pos.x + dx, pos.y + dy, pos.z + dz);
+                    aabb = compute_cargo_aabb_for_placement(def, pos, c.rot);
+                }
+
+                if !is_inside_container(&aabb, container) {
+                    had_out_of_bounds = true;
+                    continue;
+                }
+                if is_colliding(&aabb, &placed_aabbs) {
+                    had_collision = true;
+                    continue;
+                }
+
+                let support_ratio = occ_map.get_support_ratio(
+                    aabb.min.x,
+                    aabb.min.z,
+                    aabb.max.x - aabb.min.x,
+                    aabb.max.z - aabb.min.z,
+                    aabb.min.y,
+                );
+                if support_ratio < MIN_SUPPORT_RATIO {
+                    had_no_support = true;
+                    continue;
+                }
+
+                let placement = PlacedCargo {
+                    instance_id: next_id,
+                    cargo_def_id: def.id.clone(),
+                    position_cm: pos,
+                    rotation_deg: c.rot,
+                };
+
+                let s = score_placement(
+                    &placement,
+                    def,
+                    container,
+                    running_cog.total_weight,
+                    running_cog.cog_x,
+                    running_cog.cog_y,
+                    running_cog.cog_z,
+                    support_ratio,
+                    &EP_WEIGHTS,
+                    None,
+                );
+
+                scored_list.push(ScoredCandidate {
+                    placement,
+                    aabb,
+                    score: s,
+                });
+            }
+        }
+
+        // Fallback: if EP candidates found no valid position, try OccupancyMap search
+        if scored_list.is_empty() {
+            for c in cached_orientations.iter() {
+                if c.eff_w > container.width_cm
+                    || c.eff_h > container.height_cm
+                    || c.eff_d > container.depth_cm
+                {
+                    continue;
+                }
+                let pos_list =
+                    occ_map.find_candidate_positions(c.eff_w, c.eff_h, c.eff_d, 16, None);
+                for candidate_pos in &pos_list {
+                    had_candidate_position = true;
+                    let mut pos = Vec3::new(
+                        candidate_pos.x + c.offset_x,
+                        candidate_pos.y + c.offset_y,
+                        candidate_pos.z + c.offset_z,
+                    );
+                    let mut aabb = compute_cargo_aabb_for_placement(def, pos, c.rot);
+                    let mut dx = 0.0_f64;
+                    let mut dy = 0.0_f64;
+                    let mut dz = 0.0_f64;
+                    if aabb.min.x < 0.0 { dx = -aabb.min.x; }
+                    if aabb.min.y < 0.0 { dy = -aabb.min.y; }
+                    if aabb.min.z < 0.0 { dz = -aabb.min.z; }
+                    if aabb.max.x > container.width_cm { dx = container.width_cm - aabb.max.x; }
+                    if aabb.max.y > container.height_cm { dy = container.height_cm - aabb.max.y; }
+                    if aabb.max.z > container.depth_cm { dz = container.depth_cm - aabb.max.z; }
+                    if dx != 0.0 || dy != 0.0 || dz != 0.0 {
+                        pos = Vec3::new(pos.x + dx, pos.y + dy, pos.z + dz);
+                        aabb = compute_cargo_aabb_for_placement(def, pos, c.rot);
+                    }
+                    if !is_inside_container(&aabb, container) { had_out_of_bounds = true; continue; }
+                    if is_colliding(&aabb, &placed_aabbs) { had_collision = true; continue; }
+                    let support_ratio = occ_map.get_support_ratio(
+                        aabb.min.x, aabb.min.z,
+                        aabb.max.x - aabb.min.x, aabb.max.z - aabb.min.z,
+                        aabb.min.y,
+                    );
+                    if support_ratio < MIN_SUPPORT_RATIO { had_no_support = true; continue; }
+                    let placement = PlacedCargo {
+                        instance_id: next_id,
+                        cargo_def_id: def.id.clone(),
+                        position_cm: pos,
+                        rotation_deg: c.rot,
+                    };
+                    let s = score_placement(
+                        &placement, def, container,
+                        running_cog.total_weight, running_cog.cog_x,
+                        running_cog.cog_y, running_cog.cog_z,
+                        support_ratio, &EP_WEIGHTS, None,
+                    );
+                    scored_list.push(ScoredCandidate { placement, aabb, score: s });
+                }
+            }
+        }
+
+        if scored_list.is_empty() {
+            failed_def_ids.push(def.id.clone());
+            failure_reasons.push(pick_failure_reason(
+                def,
+                had_orientation_fit,
+                had_candidate_position,
+                had_stack_constraint,
+                had_no_support,
+                had_collision,
+                had_out_of_bounds,
+            ));
+            continue;
+        }
+
+        scored_list.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+
+        let mut placed = false;
+        for cand in &scored_list {
+            if let Some(ref mut ctx) = stack_ctx {
+                let violations = check_stack_incremental(ctx, &cand.placement, def);
+                if !violations.is_empty() {
+                    had_stack_constraint = true;
+                    continue;
+                }
+            }
+
+            // Success — update state
+            occ_map.mark_aabb(&cand.aabb);
+            placed_aabbs.push(cand.aabb);
+            if let Some(ref mut ctx) = stack_ctx {
+                add_to_stack_context(ctx, &cand.placement, def);
+            }
+            let center = get_placement_center(&cand.placement, def);
+            running_cog.total_weight += def.weight_kg;
+            running_cog.cog_x += center.x * def.weight_kg;
+            running_cog.cog_y += center.y * def.weight_kg;
+            running_cog.cog_z += center.z * def.weight_kg;
+
+            // EP update
+            ep_set.generate_from_placement(&cand.aabb);
+            ep_set.remove_inside_any_aabb(&placed_aabbs);
+            ep_set.remove_dominated();
+
+            placements.push(cand.placement.clone());
+            next_id += 1;
+            placed = true;
+            break;
+        }
+
+        if !placed {
+            failed_def_ids.push(def.id.clone());
+            failure_reasons.push(pick_failure_reason(
+                def,
+                had_orientation_fit,
+                had_candidate_position,
+                had_stack_constraint,
+                had_no_support,
+                had_collision,
+                had_out_of_bounds,
+            ));
+        }
+    }
+
+    PackResult {
+        placements,
+        failed_def_ids,
+        failure_reasons,
+    }
+}
+
 // ─── Main dispatcher ────────────────────────────────────────────
 
 pub struct AutoPackContext<'a> {
@@ -1457,6 +1938,18 @@ pub fn auto_pack(
                 container,
                 start_instance_id,
                 &LFF_WEIGHTS,
+                base_occ_map,
+                existing_placements,
+                existing_cargo_defs,
+                deadline,
+            )
+        }
+        PackStrategy::Ep => {
+            let sorted = sort_for_strategy(items, PackStrategy::Default, container);
+            auto_pack_extreme_point(
+                &sorted,
+                container,
+                start_instance_id,
                 base_occ_map,
                 existing_placements,
                 existing_cargo_defs,
@@ -1670,5 +2163,117 @@ mod tests {
         );
         assert_eq!(result.placements.len(), 1);
         assert_eq!(result.placements[0].instance_id, 2);
+    }
+
+    #[test]
+    fn test_ep_empty() {
+        let container = make_container();
+        let result = auto_pack(&[], &container, 1, None, None, None, PackStrategy::Ep);
+        assert!(result.placements.is_empty());
+        assert!(result.failed_def_ids.is_empty());
+    }
+
+    #[test]
+    fn test_ep_single() {
+        let container = make_container();
+        let def = make_def("box1", 100.0, 50.0, 100.0, 10.0);
+        let result = auto_pack(
+            &[def],
+            &container,
+            1,
+            None,
+            None,
+            None,
+            PackStrategy::Ep,
+        );
+        assert_eq!(result.placements.len(), 1);
+        assert_eq!(result.placements[0].position_cm.x, 0.0);
+        assert_eq!(result.placements[0].position_cm.y, 0.0);
+        assert_eq!(result.placements[0].position_cm.z, 0.0);
+    }
+
+    #[test]
+    fn test_ep_multiple() {
+        let container = make_container();
+        let def = make_def("box", 100.0, 50.0, 100.0, 10.0);
+        let items: Vec<CargoItemDef> = (0..5).map(|_| def.clone()).collect();
+        let result = auto_pack(
+            &items,
+            &container,
+            1,
+            None,
+            None,
+            None,
+            PackStrategy::Ep,
+        );
+        assert_eq!(result.placements.len(), 5);
+        // Verify no overlaps: every pair of AABBs should not collide
+        let aabbs: Vec<AABB> = result
+            .placements
+            .iter()
+            .map(|p| {
+                compute_rotated_aabb(
+                    def.width_cm,
+                    def.height_cm,
+                    def.depth_cm,
+                    p.position_cm,
+                    p.rotation_deg,
+                )
+            })
+            .collect();
+        for i in 0..aabbs.len() {
+            for j in (i + 1)..aabbs.len() {
+                assert!(
+                    !is_colliding(&aabbs[i], &[aabbs[j]]),
+                    "Placements {i} and {j} overlap"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_ep_pack_staged() {
+        let container = make_container();
+        let def1 = make_def("box1", 100.0, 50.0, 100.0, 10.0);
+        let existing = vec![PlacedCargo {
+            instance_id: 1,
+            cargo_def_id: "box1".to_string(),
+            position_cm: Vec3::zero(),
+            rotation_deg: Vec3::zero(),
+        }];
+
+        let occ_map = OccupancyMap::from_placements(&existing, &[def1.clone()], &container);
+
+        let def2 = make_def("box2", 80.0, 40.0, 80.0, 5.0);
+        let result = auto_pack(
+            &[def2],
+            &container,
+            2,
+            Some(&occ_map),
+            Some(AutoPackContext {
+                existing_placements: &existing,
+                existing_cargo_defs: &[def1.clone()],
+            }),
+            None,
+            PackStrategy::Ep,
+        );
+        assert_eq!(result.placements.len(), 1);
+        assert_eq!(result.placements[0].instance_id, 2);
+        // Should not overlap with existing placement
+        let existing_aabb = compute_rotated_aabb(
+            def1.width_cm,
+            def1.height_cm,
+            def1.depth_cm,
+            Vec3::zero(),
+            Vec3::zero(),
+        );
+        let new_aabb = compute_rotated_aabb(
+            80.0,
+            40.0,
+            80.0,
+            result.placements[0].position_cm,
+            result.placements[0].rotation_deg,
+        );
+        assert!(!is_colliding(&new_aabb, &[existing_aabb]));
     }
 }

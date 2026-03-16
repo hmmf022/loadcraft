@@ -160,6 +160,7 @@ pub enum PackStrategy {
     Layer,
     Wall,
     Lff,
+    Ep,
 }
 
 impl std::str::FromStr for PackStrategy {
@@ -171,6 +172,7 @@ impl std::str::FromStr for PackStrategy {
             "layer" => Ok(PackStrategy::Layer),
             "wall" => Ok(PackStrategy::Wall),
             "lff" => Ok(PackStrategy::Lff),
+            "ep" => Ok(PackStrategy::Ep),
             _ => Err(format!("Unknown strategy: {s}")),
         }
     }
@@ -183,6 +185,7 @@ impl std::fmt::Display for PackStrategy {
             PackStrategy::Layer => write!(f, "layer"),
             PackStrategy::Wall => write!(f, "wall"),
             PackStrategy::Lff => write!(f, "lff"),
+            PackStrategy::Ep => write!(f, "ep"),
         }
     }
 }

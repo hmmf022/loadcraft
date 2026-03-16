@@ -571,9 +571,112 @@ describe('autoPack', () => {
     expect(result.failedDefIds).toEqual(['huge'])
   })
 
+  // ─── Strategy: ep ────────────────────────────────────────────
+
+  it('ep (repack): 単一アイテム → (0,0,0) に配置', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'A', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'ep')
+    expect(result.placements).toHaveLength(1)
+    expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
+  })
+
+  it('ep (repack): 2アイテム → 2個目は1個目の隣に配置', () => {
+    const defs: CargoItemDef[] = [
+      { id: 'a', name: 'A', widthCm: 30, heightCm: 30, depthCm: 30, weightKg: 1, color: '#f00' },
+      { id: 'b', name: 'B', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#0f0' },
+    ]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'ep')
+    expect(result.placements).toHaveLength(2)
+    expect(result.failedDefIds).toHaveLength(0)
+    // Both should be placed at valid positions (no overlap confirmed by interference test below)
+    expect(result.placements[0]!.positionCm).toEqual({ x: 0, y: 0, z: 0 })
+    const pos2 = result.placements[1]!.positionCm
+    // Second item should be at an EP position (right, top, or front of first item)
+    expect(pos2.x >= 0 && pos2.y >= 0 && pos2.z >= 0).toBe(true)
+  })
+
+  it('ep (repack): noFlip アイテム', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'a', name: 'NoFlip', widthCm: 95, heightCm: 10, depthCm: 40,
+      weightKg: 1, color: '#f00', noFlip: true,
+    }]
+    const narrowContainer: ContainerDef = {
+      widthCm: 50, heightCm: 100, depthCm: 100, maxPayloadKg: 10000,
+    }
+    const result = autoPack(defs, narrowContainer, 1, undefined, undefined, undefined, 'ep')
+    expect(result.placements).toHaveLength(1)
+    const rot = result.placements[0]!.rotationDeg
+    expect(rot.x).toBe(0)
+    expect(rot.z).toBe(0)
+  })
+
+  it('ep (repack): 大きすぎるアイテム → failedDefIds', () => {
+    const defs: CargoItemDef[] = [{
+      id: 'huge', name: 'Huge', widthCm: 200, heightCm: 200, depthCm: 200,
+      weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'ep')
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds).toEqual(['huge'])
+  })
+
+  it('ep (repack): 複数アイテムがinterferenceなしで配置', () => {
+    const defs: CargoItemDef[] = [
+      { id: 'a', name: 'A', widthCm: 40, heightCm: 40, depthCm: 40, weightKg: 1, color: '#f00' },
+      { id: 'b', name: 'B', widthCm: 30, heightCm: 30, depthCm: 30, weightKg: 1, color: '#0f0' },
+      { id: 'c', name: 'C', widthCm: 25, heightCm: 25, depthCm: 25, weightKg: 1, color: '#00f' },
+      { id: 'd', name: 'D', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#ff0' },
+    ]
+    const result = autoPack(defs, container, 1, undefined, undefined, undefined, 'ep')
+    expect(result.placements.length).toBe(4)
+    if (result.placements.length > 1) {
+      const interference = checkInterference(result.placements, defs)
+      expect(interference.pairs).toHaveLength(0)
+    }
+  })
+
+  it('ep (pack_staged): 既存配置を保持して追加配置', () => {
+    const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+    occMap.markAABB({ min: { x: 0, y: 0, z: 0 }, max: { x: 50, y: 50, z: 50 } })
+    const existingPlacement = {
+      instanceId: 1, cargoDefId: 'exist',
+      positionCm: { x: 0, y: 0, z: 0 }, rotationDeg: { x: 0, y: 0, z: 0 },
+    }
+    const existDef: CargoItemDef = {
+      id: 'exist', name: 'Exist', widthCm: 50, heightCm: 50, depthCm: 50, weightKg: 10, color: '#aaa',
+    }
+    const defs: CargoItemDef[] = [{
+      id: 'new', name: 'New', widthCm: 20, heightCm: 20, depthCm: 20, weightKg: 1, color: '#f00',
+    }]
+    const result = autoPack(defs, container, 10, occMap, {
+      existingPlacements: [existingPlacement],
+      existingCargoDefs: [existDef],
+    }, undefined, 'ep')
+    expect(result.placements).toHaveLength(1)
+    // Should NOT overlap with existing
+    const pos = result.placements[0]!.positionCm
+    const aabb = { min: pos, max: { x: pos.x + 20, y: pos.y + 20, z: pos.z + 20 } }
+    // Verify no overlap with existing AABB
+    const existAabb = { min: { x: 0, y: 0, z: 0 }, max: { x: 50, y: 50, z: 50 } }
+    const overlaps = (
+      aabb.min.x < existAabb.max.x && aabb.max.x > existAabb.min.x &&
+      aabb.min.y < existAabb.max.y && aabb.max.y > existAabb.min.y &&
+      aabb.min.z < existAabb.max.z && aabb.max.z > existAabb.min.z
+    )
+    expect(overlaps).toBe(false)
+  })
+
+  it('ep (repack): 空リスト', () => {
+    const result = autoPack([], container, 1, undefined, undefined, undefined, 'ep')
+    expect(result.placements).toHaveLength(0)
+    expect(result.failedDefIds).toHaveLength(0)
+  })
+
   // ─── Deadline tests per strategy ────────────────────────────
 
-  for (const strategy of ['default', 'layer', 'wall', 'lff'] as PackStrategy[]) {
+  for (const strategy of ['default', 'layer', 'wall', 'lff', 'ep'] as PackStrategy[]) {
     it(`${strategy}: deadline=0 で即タイムアウト → partial result`, () => {
       const defs: CargoItemDef[] = []
       for (let i = 0; i < 20; i++) {
@@ -596,7 +699,7 @@ describe('autoPack', () => {
 
   // ─── All strategies: no interference ──────────────────────────
 
-  for (const strategy of ['default', 'layer', 'wall', 'lff'] as PackStrategy[]) {
+  for (const strategy of ['default', 'layer', 'wall', 'lff', 'ep'] as PackStrategy[]) {
     it(`${strategy}: 配置結果にinterferenceがない`, () => {
       const defs: CargoItemDef[] = [
         { id: 'a', name: 'A', widthCm: 30, heightCm: 30, depthCm: 30, weightKg: 1, color: '#f00' },

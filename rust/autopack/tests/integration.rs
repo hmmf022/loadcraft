@@ -169,6 +169,26 @@ fn test_pretty_output() {
 }
 
 #[test]
+fn test_ep_basic_repack() {
+    let input = include_str!("fixtures/basic_repack_input.json");
+    let result = run_autopack(input, &["-m", "repack", "-t", "10000", "-s", "ep"]);
+
+    assert_eq!(result["success"], true);
+
+    let placements = result["placements"].as_array().unwrap();
+    assert_eq!(placements.len(), 5); // 3 box-a + 2 box-b
+
+    for p in placements {
+        let pos = &p["positionCm"];
+        assert!(pos["x"].as_f64().unwrap() >= 0.0);
+        assert!(pos["y"].as_f64().unwrap() >= 0.0);
+        assert!(pos["z"].as_f64().unwrap() >= 0.0);
+    }
+
+    assert!(result["failedDefIds"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn test_json_roundtrip() {
     // Verify that output JSON is valid and all required fields are present
     let input = include_str!("fixtures/basic_repack_input.json");

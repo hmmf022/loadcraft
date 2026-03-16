@@ -7,7 +7,7 @@ import type { StackContext } from './StackChecker'
 
 // ─── Public types ───────────────────────────────────────────────
 
-export type PackStrategy = 'default' | 'layer' | 'wall' | 'lff'
+export type PackStrategy = 'default' | 'layer' | 'wall' | 'lff' | 'ep'
 
 export interface PackResult {
   placements: PlacedCargo[]
@@ -93,6 +93,11 @@ const GROUPING_FALLBACK_WEIGHTS: ScoreWeights = {
 const LFF_WEIGHTS: ScoreWeights = {
   floor: 0.6, backWall: 0.4, side: 0.4, support: 0.8,
   rotation: 0.2, cog: 0.05, grouping: 0.8, caving: 1.5,
+}
+
+const EP_WEIGHTS: ScoreWeights = {
+  floor: 1.2, backWall: 1.0, side: 0.9, support: 0.6,
+  rotation: 0.2, cog: 0.05, grouping: 0, caving: 1.0,
 }
 
 // ─── Constants ──────────────────────────────────────────────────
@@ -831,6 +836,337 @@ function autoPackWalled(
   return { placements, voxelizeResults, failedDefIds, failureReasons }
 }
 
+// ─── Extreme Point helpers ───────────────────────────────────────
+
+/** Compute AABB for a cargo def (simple or composite) at position with rotation. */
+function computeCargoAABB(
+  def: CargoItemDef,
+  position: Vec3,
+  rotationDeg: Vec3,
+): { min: Vec3; max: Vec3 } {
+  if (def.blocks) {
+    return voxelizeComposite(def.blocks, position, rotationDeg).aabb
+  }
+  return computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, position, rotationDeg)
+}
+
+interface ExtremePoint {
+  x: number
+  z: number
+  fixedY: number | null  // EP_top: fixed Y, others: null (dynamic via getStackHeight)
+}
+
+class ExtremePointSet {
+  points: ExtremePoint[]
+  containerW: number
+  containerH: number
+  containerD: number
+
+  constructor(container: ContainerDef) {
+    this.containerW = container.widthCm
+    this.containerH = container.heightCm
+    this.containerD = container.depthCm
+    this.points = [{ x: 0, z: 0, fixedY: null }]
+  }
+
+  generateFromPlacement(aabb: { min: Vec3; max: Vec3 }): void {
+    // EP_right: right side
+    if (aabb.max.x < this.containerW && aabb.min.z < this.containerD) {
+      this.points.push({ x: aabb.max.x, z: aabb.min.z, fixedY: null })
+    }
+    // EP_top: on top
+    if (aabb.min.x < this.containerW && aabb.min.z < this.containerD && aabb.max.y < this.containerH) {
+      this.points.push({ x: aabb.min.x, z: aabb.min.z, fixedY: aabb.max.y })
+    }
+    // EP_front: in front
+    if (aabb.min.x < this.containerW && aabb.max.z < this.containerD) {
+      this.points.push({ x: aabb.min.x, z: aabb.max.z, fixedY: null })
+    }
+  }
+
+  removeInsideAnyAABB(aabbs: Array<{ min: Vec3; max: Vec3 }>): void {
+    this.points = this.points.filter(ep => {
+      for (const a of aabbs) {
+        if (ep.x >= a.min.x && ep.x < a.max.x &&
+            ep.z >= a.min.z && ep.z < a.max.z) {
+          if (ep.fixedY === null) return false
+          if (ep.fixedY >= a.min.y && ep.fixedY < a.max.y) return false
+        }
+      }
+      return true
+    })
+  }
+
+  removeDominated(): void {
+    const n = this.points.length
+    const dominated = new Set<number>()
+    for (let i = 0; i < n; i++) {
+      if (dominated.has(i)) continue
+      const a = this.points[i]!
+      for (let j = i + 1; j < n; j++) {
+        if (dominated.has(j)) continue
+        const b = this.points[j]!
+        // a dominates b?
+        if (a.x <= b.x && a.z <= b.z) {
+          if (a.fixedY === null && b.fixedY === null) {
+            dominated.add(j)
+          } else if (a.fixedY !== null && b.fixedY !== null && a.fixedY <= b.fixedY) {
+            dominated.add(j)
+          }
+        }
+        // b dominates a?
+        if (b.x <= a.x && b.z <= a.z) {
+          if (a.fixedY === null && b.fixedY === null) {
+            dominated.add(i)
+            break
+          } else if (a.fixedY !== null && b.fixedY !== null && b.fixedY <= a.fixedY) {
+            dominated.add(i)
+            break
+          }
+        }
+      }
+    }
+    this.points = this.points.filter((_, i) => !dominated.has(i))
+  }
+
+  getCandidates(): ExtremePoint[] {
+    if (this.points.length <= 500) return this.points
+    const sorted = [...this.points].sort((a, b) => (a.x + a.z) - (b.x + b.z))
+    return sorted.slice(0, 500)
+  }
+}
+
+// ─── Extreme Point packing ──────────────────────────────────────
+
+function autoPackExtremePoint(
+  items: CargoItemDef[],
+  container: ContainerDef,
+  startInstanceId: number,
+  baseOccMap?: OccupancyMap,
+  context?: AutoPackContext,
+  deadlineMs?: number,
+): PackResult {
+  const placements: PlacedCargo[] = []
+  const voxelizeResults: VoxelizeResult[] = []
+  const failedDefIds: string[] = []
+  const failureReasons: PackFailureReason[] = []
+  const existingPlacements = context?.existingPlacements ?? []
+  const existingDefs = context?.existingCargoDefs ?? []
+
+  const occMap = baseOccMap
+    ? baseOccMap.clone()
+    : new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
+  let nextId = startInstanceId
+  const allDefs = dedupeDefs([...existingDefs, ...items])
+  const placedAabbs = buildAabbList(existingPlacements, allDefs)
+
+  const hasAnyStackConstraints = allDefs.some(
+    d => d.noStack === true || d.maxStackWeightKg !== undefined
+  )
+  const stackCtx = hasAnyStackConstraints
+    ? buildStackContext(existingPlacements, allDefs)
+    : null
+
+  const runningCog: RunningCog = { totalWeight: 0, cogX: 0, cogY: 0, cogZ: 0 }
+  for (const p of existingPlacements) {
+    const def = allDefs.find(d => d.id === p.cargoDefId)
+    if (!def) continue
+    const center = getPlacementCenter(p, def)
+    runningCog.totalWeight += def.weightKg
+    runningCog.cogX += center.x * def.weightKg
+    runningCog.cogY += center.y * def.weightKg
+    runningCog.cogZ += center.z * def.weightKg
+  }
+
+  const getCachedOrientations = createOrientationCache()
+
+  // ── EP set initialization ──
+  const epSet = new ExtremePointSet(container)
+
+  // Generate initial EPs from existing placements
+  for (const p of existingPlacements) {
+    const def = allDefs.find(d => d.id === p.cargoDefId)
+    if (!def) continue
+    const aabb = computeCargoAABB(def, p.positionCm, p.rotationDeg)
+    epSet.generateFromPlacement(aabb)
+  }
+  epSet.removeInsideAnyAABB(placedAabbs)
+  epSet.removeDominated()
+
+  // ── Main loop ──
+  for (const def of items) {
+    if (deadlineMs !== undefined && Date.now() > deadlineMs) {
+      failedDefIds.push(def.id)
+      failureReasons.push({
+        cargoDefId: def.id, cargoName: def.name,
+        code: 'NO_FEASIBLE_POSITION', detail: 'Auto-pack timed out.',
+      })
+      continue
+    }
+
+    const candidates = getCachedOrientations(def)
+    const scoredList: Array<{ placement: PlacedCargo; aabb: { min: Vec3; max: Vec3 }; score: number }> = []
+    let hadOrientationFit = false
+    let hadCandidatePosition = false
+    let hadOutOfBounds = false
+    let hadCollision = false
+    let hadNoSupport = false
+    let hadStackConstraint = false
+
+    for (const c of candidates) {
+      if (c.effW > container.widthCm || c.effH > container.heightCm || c.effD > container.depthCm) continue
+      hadOrientationFit = true
+
+      for (const ep of epSet.getCandidates()) {
+        // Determine Y coordinate
+        const baseY = ep.fixedY !== null
+          ? ep.fixedY
+          : occMap.getStackHeight(ep.x, ep.z, c.effW, c.effD)
+
+        if (baseY + c.effH > container.heightCm) continue
+        hadCandidatePosition = true
+
+        let pos: Vec3 = {
+          x: ep.x + c.offsetX,
+          y: baseY + c.offsetY,
+          z: ep.z + c.offsetZ,
+        }
+
+        let aabb = computeCargoAABB(def, pos, c.rot)
+
+        // Bounds correction
+        let dx = 0, dy = 0, dz = 0
+        if (aabb.min.x < 0) dx = -aabb.min.x
+        if (aabb.min.y < 0) dy = -aabb.min.y
+        if (aabb.min.z < 0) dz = -aabb.min.z
+        if (aabb.max.x > container.widthCm) dx = container.widthCm - aabb.max.x
+        if (aabb.max.y > container.heightCm) dy = container.heightCm - aabb.max.y
+        if (aabb.max.z > container.depthCm) dz = container.depthCm - aabb.max.z
+        if (dx !== 0 || dy !== 0 || dz !== 0) {
+          pos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
+          aabb = computeCargoAABB(def, pos, c.rot)
+        }
+
+        if (!isInsideContainer(aabb, container)) { hadOutOfBounds = true; continue }
+        if (isColliding(aabb, placedAabbs)) { hadCollision = true; continue }
+
+        const supportRatio = occMap.getSupportRatio(
+          aabb.min.x, aabb.min.z,
+          aabb.max.x - aabb.min.x, aabb.max.z - aabb.min.z,
+          aabb.min.y,
+        )
+        if (supportRatio < MIN_SUPPORT_RATIO) { hadNoSupport = true; continue }
+
+        const placement: PlacedCargo = {
+          instanceId: nextId, cargoDefId: def.id,
+          positionCm: pos, rotationDeg: c.rot,
+        }
+        const score = scorePlacement(
+          placement, def, container,
+          runningCog.totalWeight, runningCog.cogX, runningCog.cogY, runningCog.cogZ,
+          supportRatio, EP_WEIGHTS, undefined,
+        )
+        scoredList.push({ placement, aabb, score })
+      }
+    }
+
+    // Fallback: if EP candidates found no valid position, try OccupancyMap search
+    if (scoredList.length === 0) {
+      for (const c of candidates) {
+        if (c.effW > container.widthCm || c.effH > container.heightCm || c.effD > container.depthCm) continue
+        const posList = occMap.findCandidatePositions(c.effW, c.effH, c.effD, 16)
+        for (const candidatePos of posList) {
+          hadCandidatePosition = true
+          let pos: Vec3 = {
+            x: candidatePos.x + c.offsetX,
+            y: candidatePos.y + c.offsetY,
+            z: candidatePos.z + c.offsetZ,
+          }
+          let aabb = computeCargoAABB(def, pos, c.rot)
+          let dx = 0, dy = 0, dz = 0
+          if (aabb.min.x < 0) dx = -aabb.min.x
+          if (aabb.min.y < 0) dy = -aabb.min.y
+          if (aabb.min.z < 0) dz = -aabb.min.z
+          if (aabb.max.x > container.widthCm) dx = container.widthCm - aabb.max.x
+          if (aabb.max.y > container.heightCm) dy = container.heightCm - aabb.max.y
+          if (aabb.max.z > container.depthCm) dz = container.depthCm - aabb.max.z
+          if (dx !== 0 || dy !== 0 || dz !== 0) {
+            pos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
+            aabb = computeCargoAABB(def, pos, c.rot)
+          }
+          if (!isInsideContainer(aabb, container)) { hadOutOfBounds = true; continue }
+          if (isColliding(aabb, placedAabbs)) { hadCollision = true; continue }
+          const supportRatio = occMap.getSupportRatio(
+            aabb.min.x, aabb.min.z,
+            aabb.max.x - aabb.min.x, aabb.max.z - aabb.min.z,
+            aabb.min.y,
+          )
+          if (supportRatio < MIN_SUPPORT_RATIO) { hadNoSupport = true; continue }
+          const placement: PlacedCargo = {
+            instanceId: nextId, cargoDefId: def.id,
+            positionCm: pos, rotationDeg: c.rot,
+          }
+          const score = scorePlacement(
+            placement, def, container,
+            runningCog.totalWeight, runningCog.cogX, runningCog.cogY, runningCog.cogZ,
+            supportRatio, EP_WEIGHTS, undefined,
+          )
+          scoredList.push({ placement, aabb, score })
+        }
+      }
+    }
+
+    if (scoredList.length === 0) {
+      failedDefIds.push(def.id)
+      failureReasons.push(pickFailureReason(def, hadOrientationFit, hadCandidatePosition, hadStackConstraint, hadNoSupport, hadCollision, hadOutOfBounds))
+      continue
+    }
+
+    scoredList.sort((a, b) => a.score - b.score)
+
+    let placed = false
+    for (const cand of scoredList) {
+      if (stackCtx) {
+        const violations = checkStackIncremental(stackCtx, cand.placement, def)
+        if (violations.length > 0) { hadStackConstraint = true; continue }
+      }
+
+      // Success — update state
+      occMap.markAABB(cand.aabb)
+      placedAabbs.push(cand.aabb)
+      if (stackCtx) addToStackContext(stackCtx, cand.placement, def)
+      const center = getPlacementCenter(cand.placement, def)
+      runningCog.totalWeight += def.weightKg
+      runningCog.cogX += center.x * def.weightKg
+      runningCog.cogY += center.y * def.weightKg
+      runningCog.cogZ += center.z * def.weightKg
+
+      // EP update
+      epSet.generateFromPlacement(cand.aabb)
+      epSet.removeInsideAnyAABB(placedAabbs)
+      epSet.removeDominated()
+
+      // Generate VoxelizeResult
+      const result = def.blocks
+        ? voxelizeComposite(def.blocks, cand.placement.positionCm, cand.placement.rotationDeg)
+        : voxelize(def.widthCm, def.heightCm, def.depthCm, cand.placement.positionCm, cand.placement.rotationDeg)
+
+      placements.push(cand.placement)
+      voxelizeResults.push(result)
+      nextId++
+      placed = true
+      break
+    }
+
+    if (!placed) {
+      failedDefIds.push(def.id)
+      failureReasons.push(pickFailureReason(def, hadOrientationFit, hadCandidatePosition, hadStackConstraint, hadNoSupport, hadCollision, hadOutOfBounds))
+    }
+  }
+
+  return { placements, voxelizeResults, failedDefIds, failureReasons }
+}
+
 // ─── Main dispatcher ────────────────────────────────────────────
 
 /**
@@ -869,6 +1205,11 @@ export function autoPack(
   if (strategy === 'lff') {
     const sorted = sortForStrategy(items, 'lff', container)
     return autoPackSinglePass(sorted, container, startInstanceId, LFF_WEIGHTS, baseOccMap, context, deadlineMs)
+  }
+
+  if (strategy === 'ep') {
+    const sorted = sortForStrategy(items, 'default', container)
+    return autoPackExtremePoint(sorted, container, startInstanceId, baseOccMap, context, deadlineMs)
   }
 
   // default

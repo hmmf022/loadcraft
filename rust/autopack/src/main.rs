@@ -30,7 +30,7 @@ struct Cli {
     #[arg(short, long, default_value = "30000")]
     timeout: u64,
 
-    /// Strategy: default, layer, wall, lff
+    /// Strategy: default, layer, wall, lff, ep
     #[arg(short, long, default_value = "default")]
     strategy: String,
 
