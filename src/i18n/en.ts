@@ -61,6 +61,11 @@ export const en: TranslationDict = {
     repackAll: 'Repack All',
     clearStage: 'Clear Stage',
     confirmRepack: 'This will clear all existing placements and repack. Continue?',
+    strategy: 'Strategy',
+    strategyDefault: 'Default',
+    strategyLayer: 'Layer',
+    strategyWall: 'Wall',
+    strategyLff: 'LFF',
   },
   placement: {
     selectCargo: 'Select a cargo item',

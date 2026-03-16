@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "container": {
+    "widthCm": 590,
+    "heightCm": 239,
+    "depthCm": 235,
+    "maxPayloadKg": 28200
+  },
+  "cargoDefs": [
+    {
+      "id": "box-a",
+      "name": "Box A",
+      "widthCm": 100,
+      "heightCm": 50,
+      "depthCm": 80,
+      "weightKg": 15,
+      "color": "#FF0000"
+    },
+    {
+      "id": "box-b",
+      "name": "Box B",
+      "widthCm": 60,
+      "heightCm": 40,
+      "depthCm": 60,
+      "weightKg": 10,
+      "color": "#00FF00"
+    }
+  ],
+  "placements": [],
+  "nextInstanceId": 1,
+  "stagedItems": [
+    { "cargoDefId": "box-a", "count": 3 },
+    { "cargoDefId": "box-b", "count": 2 }
+  ]
+}

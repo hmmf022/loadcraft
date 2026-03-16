@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "container": { "widthCm": 100, "heightCm": 100, "depthCm": 100, "maxPayloadKg": 10000 },
+  "cargoDefs": [
+    { "id": "huge", "name": "Huge Box", "widthCm": 200, "heightCm": 200, "depthCm": 200, "weightKg": 5, "color": "#FF0000" }
+  ],
+  "placements": [],
+  "nextInstanceId": 1,
+  "stagedItems": [
+    { "cargoDefId": "huge", "count": 1 }
+  ]
+}

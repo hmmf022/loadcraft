@@ -20,6 +20,7 @@ import { OccupancyMap } from '../core/OccupancyMap.js'
 import { parseCargoCSV, parseCargoJSON } from '../core/ImportParser.js'
 import { parseShapeData, shapeToCargoItemDef } from '../core/ShapeParser.js'
 import { tryKick } from '../core/WallKick.js'
+import { execFileSync } from 'node:child_process'
 
 export class SimulatorSession {
   grid: VoxelGrid
@@ -368,7 +369,37 @@ export class SimulatorSession {
     return { success: true, newY: bestY }
   }
 
-  autoPackCargo(mode: AutoPackMode = 'packStaged'): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
+  private static readonly MAX_AUTO_PACK_ITEMS = 500
+
+  private static readonly RUST_BIN = process.env['AUTOPACK_RUST_BIN']
+
+  private autoPackViaRust(
+    mode: AutoPackMode,
+    timeoutMs: number,
+  ): { placements: PlacedCargo[]; nextInstanceId: number; failedDefIds: string[]; failureReasons: PackFailureReason[]; stagedItems: StagedItem[] } {
+    const saveJson = serializeSaveData({
+      container: this.container,
+      cargoDefs: this.cargoDefs,
+      placements: this.placements,
+      nextInstanceId: this.nextInstanceId,
+      stagedItems: this.stagedItems,
+    })
+    const rustMode = mode === 'packStaged' ? 'pack_staged' : 'repack'
+    const raw = execFileSync(SimulatorSession.RUST_BIN!, [
+      '-m', rustMode, '-t', String(timeoutMs), '-s', 'default',
+    ], { input: saveJson, encoding: 'utf8', timeout: timeoutMs + 5000 })
+    return JSON.parse(raw)
+  }
+
+  autoPackCargo(
+    mode: AutoPackMode = 'packStaged',
+    deadlineMs?: number,
+  ): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
+    // If Rust binary is available, use it for the packing algorithm
+    if (SimulatorSession.RUST_BIN) {
+      return this.autoPackCargoViaRust(mode, deadlineMs)
+    }
+
     if (mode === 'repack') {
       const allItems: CargoItemDef[] = []
       for (const p of this.placements) {
@@ -386,6 +417,16 @@ export class SimulatorSession {
         return { success: false, placed: 0, failed: 0, failureReasons: [], error: 'No items to repack' }
       }
 
+      if (allItems.length > SimulatorSession.MAX_AUTO_PACK_ITEMS) {
+        return {
+          success: false,
+          placed: 0,
+          failed: allItems.length,
+          failureReasons: [],
+          error: `Too many items (${allItems.length}). auto_pack supports up to ${SimulatorSession.MAX_AUTO_PACK_ITEMS} items. Consider packing in smaller batches using stage_cargo + auto_pack(mode: "pack_staged").`,
+        }
+      }
+
       const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
       for (const p of this.placements) {
         const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
@@ -393,7 +434,7 @@ export class SimulatorSession {
         removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
       }
 
-      const result = autoPack(allItems, this.container, this.nextInstanceId)
+      const result = autoPack(allItems, this.container, this.nextInstanceId, undefined, undefined, deadlineMs, 'default')
 
       if (result.placements.length === 0) {
         return {
@@ -418,7 +459,24 @@ export class SimulatorSession {
         (mx, p) => Math.max(mx, p.instanceId), this.nextInstanceId,
       )
       this.nextInstanceId = maxInstanceId + 1
+
+      // Restage items that failed to place
+      const placedCountByDef = new Map<string, number>()
+      for (const p of result.placements) {
+        placedCountByDef.set(p.cargoDefId, (placedCountByDef.get(p.cargoDefId) ?? 0) + 1)
+      }
+      const allCountByDef = new Map<string, number>()
+      for (const item of allItems) {
+        allCountByDef.set(item.id, (allCountByDef.get(item.id) ?? 0) + 1)
+      }
       this.stagedItems = []
+      for (const [defId, totalCount] of allCountByDef) {
+        const placed = placedCountByDef.get(defId) ?? 0
+        const remaining = totalCount - placed
+        if (remaining > 0) {
+          this.stagedItems.push({ cargoDefId: defId, count: remaining })
+        }
+      }
 
       return {
         success: true,
@@ -444,11 +502,21 @@ export class SimulatorSession {
         return { success: false, placed: 0, failed: 0, failureReasons: [], error: 'No staged items' }
       }
 
+      if (items.length > SimulatorSession.MAX_AUTO_PACK_ITEMS) {
+        return {
+          success: false,
+          placed: 0,
+          failed: items.length,
+          failureReasons: [],
+          error: `Too many items (${items.length}). auto_pack supports up to ${SimulatorSession.MAX_AUTO_PACK_ITEMS} items. Consider packing in smaller batches using stage_cargo + auto_pack(mode: "pack_staged").`,
+        }
+      }
+
       const occMap = OccupancyMap.fromPlacements(this.placements, this.cargoDefs, this.container)
       const result = autoPack(items, this.container, this.nextInstanceId, occMap, {
         existingPlacements: this.placements,
         existingCargoDefs: this.cargoDefs,
-      })
+      }, deadlineMs, 'default')
 
       if (result.placements.length === 0) {
         return {
@@ -494,6 +562,124 @@ export class SimulatorSession {
         failureReasons: result.failureReasons,
       }
     }
+  }
+
+  private autoPackCargoViaRust(
+    mode: AutoPackMode,
+    deadlineMs?: number,
+  ): { success: boolean; placed: number; failed: number; failureReasons: PackFailureReason[]; error?: string } {
+    const timeoutMs = deadlineMs ?? 30000
+
+    try {
+      const rustResult = this.autoPackViaRust(mode, timeoutMs)
+
+      if (rustResult.placements.length === 0) {
+        // Update staged items from Rust result
+        this.stagedItems = rustResult.stagedItems
+        return {
+          success: false,
+          placed: 0,
+          failed: rustResult.failedDefIds.length,
+          failureReasons: rustResult.failureReasons,
+          error: 'No items could be placed',
+        }
+      }
+
+      if (mode === 'repack') {
+        // Build undo entries for removed placements
+        const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
+        for (const p of this.placements) {
+          const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
+          if (!def) continue
+          removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
+        }
+
+        // Build undo entries for new placements
+        const addedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
+        for (const p of rustResult.placements) {
+          const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
+          if (!def) continue
+          addedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
+        }
+
+        const repackCmd = new RepackCommand(removedEntries, addedEntries)
+        this.history.executeCommand(repackCmd, this.grid)
+
+        this.placements = rustResult.placements
+        this.nextInstanceId = rustResult.nextInstanceId
+        this.stagedItems = rustResult.stagedItems
+      } else {
+        // pack_staged: append new placements
+        const commands: PlaceCommand[] = []
+        for (const p of rustResult.placements) {
+          const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
+          if (!def) continue
+          const r = voxelizeCargo(def, p.positionCm, p.rotationDeg)
+          commands.push(new PlaceCommand(p.instanceId, r, def.name, p))
+        }
+
+        const batch = new BatchCommand(commands)
+        this.history.executeCommand(batch, this.grid)
+
+        this.placements = [...this.placements, ...rustResult.placements]
+        this.nextInstanceId = rustResult.nextInstanceId
+        this.stagedItems = rustResult.stagedItems
+      }
+
+      return {
+        success: true,
+        placed: rustResult.placements.length,
+        failed: rustResult.failedDefIds.length,
+        failureReasons: rustResult.failureReasons,
+      }
+    } catch (e) {
+      // Fallback to TS implementation on Rust binary failure
+      return {
+        success: false,
+        placed: 0,
+        failed: 0,
+        failureReasons: [],
+        error: `Rust autopack failed: ${e instanceof Error ? e.message : String(e)}`,
+      }
+    }
+  }
+
+  restagePlacements(instanceIds?: number[]): { success: boolean; restaged: number; error?: string } {
+    const targets = instanceIds
+      ? this.placements.filter(p => instanceIds.includes(p.instanceId))
+      : [...this.placements]
+
+    if (targets.length === 0) {
+      return { success: false, restaged: 0, error: 'No matching placements found' }
+    }
+
+    // Count by cargoDefId for staging
+    const countMap = new Map<string, number>()
+    for (const p of targets) {
+      countMap.set(p.cargoDefId, (countMap.get(p.cargoDefId) ?? 0) + 1)
+    }
+
+    // Remove from placements + grid via BatchCommand (single undo)
+    const removeCommands: RemoveCommand[] = []
+    for (const p of targets) {
+      const def = this.cargoDefs.find(d => d.id === p.cargoDefId)
+      if (!def) continue
+      const result = voxelizeCargo(def, p.positionCm, p.rotationDeg)
+      removeCommands.push(new RemoveCommand(p.instanceId, result, def.name, p))
+    }
+
+    const batch = new BatchCommand(removeCommands)
+    this.history.executeCommand(batch, this.grid)
+
+    const targetIds = new Set(targets.map(t => t.instanceId))
+    this.placements = this.placements.filter(p => !targetIds.has(p.instanceId))
+
+    // Add to staged
+    for (const [defId, count] of countMap) {
+      this.stageCargo(defId, count)
+    }
+
+    return { success: true, restaged: targets.length }
   }
 
   findPosition(cargoDefId: string): { position: Vec3 | null } {
@@ -572,9 +758,14 @@ export class SimulatorSession {
         .filter((p) => !command.added.some((a) => a.placement.instanceId === p.instanceId))
       this.placements = [...this.placements, ...command.removed.map((r) => r.placement)]
     } else if (command instanceof BatchCommand) {
-      this.placements = this.placements.filter((p) =>
-        !command.commands.some((c) => c.placement.instanceId === p.instanceId)
-      )
+      // Undo batch: reverse each sub-command's effect on placements
+      for (const sub of command.commands) {
+        if (sub instanceof PlaceCommand) {
+          this.placements = this.placements.filter((p) => p.instanceId !== sub.instanceId)
+        } else if (sub instanceof RemoveCommand) {
+          this.placements = [...this.placements, sub.placement]
+        }
+      }
     }
 
     return { success: true, description: command.getDescription() }
@@ -601,8 +792,14 @@ export class SimulatorSession {
         .filter((p) => !command.removed.some((r) => r.placement.instanceId === p.instanceId))
       this.placements = [...this.placements, ...command.added.map((a) => a.placement)]
     } else if (command instanceof BatchCommand) {
-      const addedPlacements = command.commands.map((c) => c.placement)
-      this.placements = [...this.placements, ...addedPlacements]
+      // Redo batch: re-apply each sub-command's effect on placements
+      for (const sub of command.commands) {
+        if (sub instanceof PlaceCommand) {
+          this.placements = [...this.placements, sub.placement]
+        } else if (sub instanceof RemoveCommand) {
+          this.placements = this.placements.filter((p) => p.instanceId !== sub.instanceId)
+        }
+      }
     }
 
     return { success: true, description: command.getDescription() }

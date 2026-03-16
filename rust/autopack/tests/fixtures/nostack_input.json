@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "container": { "widthCm": 110, "heightCm": 200, "depthCm": 110, "maxPayloadKg": 10000 },
+  "cargoDefs": [
+    { "id": "fragile", "name": "Fragile Box", "widthCm": 100, "heightCm": 50, "depthCm": 100, "weightKg": 20, "color": "#FF0000", "noStack": true }
+  ],
+  "placements": [],
+  "nextInstanceId": 1,
+  "stagedItems": [
+    { "cargoDefId": "fragile", "count": 3 }
+  ]
+}
