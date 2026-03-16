@@ -308,6 +308,9 @@ function sortForStrategy(items: CargoItemDef[], strategy: PackStrategy, containe
       return flex
     }
     sorted.sort((a, b) => {
+      const nsA = a.noStack ? 1 : 0
+      const nsB = b.noStack ? 1 : 0
+      if (nsA !== nsB) return nsA - nsB
       const flexA = getFlexibility(a)
       const flexB = getFlexibility(b)
       if (flexA !== flexB) return flexA - flexB
@@ -317,8 +320,11 @@ function sortForStrategy(items: CargoItemDef[], strategy: PackStrategy, containe
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
     })
   } else {
-    // default / layer / wall fallback: volume descending
+    // default / layer / wall fallback: volume descending, noStack items last
     sorted.sort((a, b) => {
+      const nsA = a.noStack ? 1 : 0
+      const nsB = b.noStack ? 1 : 0
+      if (nsA !== nsB) return nsA - nsB
       const volA = a.widthCm * a.heightCm * a.depthCm
       const volB = b.widthCm * b.heightCm * b.depthCm
       return volB - volA
@@ -491,8 +497,13 @@ function autoPackLayered(
     groups.push({ def, count, bestOrientation: best, layerHeight: best.effH })
   }
 
-  // 3. Sort groups by layerHeight descending (tallest groups at the bottom)
-  groups.sort((a, b) => b.layerHeight - a.layerHeight)
+  // 3. Sort groups by layerHeight descending (tallest groups at the bottom), noStack last
+  groups.sort((a, b) => {
+    const nsA = a.def.noStack ? 1 : 0
+    const nsB = b.def.noStack ? 1 : 0
+    if (nsA !== nsB) return nsA - nsB
+    return b.layerHeight - a.layerHeight
+  })
 
   // 4. Build layers
   const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)

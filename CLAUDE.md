@@ -40,6 +40,22 @@ npm run mcp-editor:dev    # tsx dev run
 - **renderVersion** (`src/state/store.ts`): increment triggers Renderer GPU buffer rebuild via non-React subscription.
 - **Units**: all coordinates and dimensions are in centimeters.
 
+## Rust Autopack CLI
+
+`rust/autopack/` に autopack アルゴリズムの Rust 移植版がある。詳細は `rust/autopack/README.md` 参照。
+
+```bash
+cd rust/autopack
+cargo build --release    # リリースビルド
+cargo test               # ユニット + 統合テスト
+
+# スタンドアロン実行
+cat state.json | ./target/release/loadcraft-autopack -m repack --pretty
+
+# MCP 連携 (環境変数でバイナリパスを指定)
+AUTOPACK_RUST_BIN=./rust/autopack/target/release/loadcraft-autopack npm run mcp:dev
+```
+
 ## References
 
 Detailed design specs are in `docs/`.

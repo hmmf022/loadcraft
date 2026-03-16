@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "container": { "widthCm": 590, "heightCm": 239, "depthCm": 235, "maxPayloadKg": 28200 },
+  "cargoDefs": [],
+  "placements": [],
+  "nextInstanceId": 1
+}
