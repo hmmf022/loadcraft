@@ -1,6 +1,8 @@
 import type { VoxelGrid } from './VoxelGrid'
-import type { PlacedCargo } from './types'
+import type { PlacedCargo, CargoItemDef, Vec3 } from './types'
 import type { VoxelizeResult } from './Voxelizer'
+
+export type VoxelizeFn = (def: CargoItemDef, pos: Vec3, rot: Vec3) => VoxelizeResult
 
 export interface Command {
   execute(grid: VoxelGrid): boolean
@@ -150,23 +152,24 @@ export class RotateCommand implements Command {
 }
 
 export class RepackCommand implements Command {
-  removed: { placement: PlacedCargo; result: VoxelizeResult }[]
+  removed: { placement: PlacedCargo; def: CargoItemDef }[]
   added: { placement: PlacedCargo; result: VoxelizeResult }[]
   placement: PlacedCargo
+  private _voxelizeFn: VoxelizeFn
 
   constructor(
-    removed: { placement: PlacedCargo; result: VoxelizeResult }[],
+    removed: { placement: PlacedCargo; def: CargoItemDef }[],
     added: { placement: PlacedCargo; result: VoxelizeResult }[],
+    voxelizeFn: VoxelizeFn,
   ) {
     this.removed = removed
     this.added = added
     this.placement = added[0]?.placement ?? removed[0]!.placement
+    this._voxelizeFn = voxelizeFn
   }
 
   execute(grid: VoxelGrid): boolean {
-    for (const r of this.removed) {
-      fillFromResult(grid, r.result, 0)
-    }
+    grid.clear()
     for (const a of this.added) {
       fillFromResult(grid, a.result, a.placement.instanceId)
     }
@@ -174,11 +177,10 @@ export class RepackCommand implements Command {
   }
 
   undo(grid: VoxelGrid): void {
-    for (const a of this.added) {
-      fillFromResult(grid, a.result, 0)
-    }
+    grid.clear()
     for (const r of this.removed) {
-      fillFromResult(grid, r.result, r.placement.instanceId)
+      const result = this._voxelizeFn(r.def, r.placement.positionCm, r.placement.rotationDeg)
+      fillFromResult(grid, result, r.placement.instanceId)
     }
   }
 

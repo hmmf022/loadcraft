@@ -43,18 +43,15 @@ function rotatePoint(m: number[], x: number, y: number, z: number): Vec3 {
   }
 }
 
-/** Compute the AABB of a rotated box at the given position.
- *  exact=true returns raw floating-point bounds (for picking);
- *  exact=false (default) snaps to integer voxel bounds.
- */
-export function computeRotatedAABB(
-  w: number, h: number, d: number,
-  position: Vec3, rotationDeg: Vec3,
-  exact = false,
-): { min: Vec3; max: Vec3 } {
-  const rot = buildRotation3x3(rotationDeg)
+/** Snap near-integer values to avoid floating-point floor/ceil overshoot */
+const snap = (v: number) => Math.abs(v - Math.round(v)) < 0.001 ? Math.round(v) : v
 
-  // 8 corners of the box (origin-centered before rotation)
+/** Internal: compute AABB from a pre-built rotation matrix */
+function computeAABBFromMatrix(
+  w: number, h: number, d: number,
+  position: Vec3, rot: number[],
+  exact: boolean,
+): { min: Vec3; max: Vec3 } {
   const corners = [
     [0, 0, 0], [w, 0, 0], [0, h, 0], [0, 0, d],
     [w, h, 0], [w, 0, d], [0, h, d], [w, h, d],
@@ -83,13 +80,23 @@ export function computeRotatedAABB(
     }
   }
 
-  // Snap near-integer values to avoid floating-point floor/ceil overshoot
-  const snap = (v: number) => Math.abs(v - Math.round(v)) < 0.001 ? Math.round(v) : v
-
   return {
     min: { x: Math.floor(snap(minX)), y: Math.floor(snap(minY)), z: Math.floor(snap(minZ)) },
     max: { x: Math.ceil(snap(maxX)), y: Math.ceil(snap(maxY)), z: Math.ceil(snap(maxZ)) },
   }
+}
+
+/** Compute the AABB of a rotated box at the given position.
+ *  exact=true returns raw floating-point bounds (for picking);
+ *  exact=false (default) snaps to integer voxel bounds.
+ */
+export function computeRotatedAABB(
+  w: number, h: number, d: number,
+  position: Vec3, rotationDeg: Vec3,
+  exact = false,
+): { min: Vec3; max: Vec3 } {
+  const rot = buildRotation3x3(rotationDeg)
+  return computeAABBFromMatrix(w, h, d, position, rot, exact)
 }
 
 /**
@@ -102,30 +109,26 @@ export function voxelize(
   w: number, h: number, d: number,
   position: Vec3, rotationDeg: Vec3,
 ): VoxelizeResult {
-  const aabb = computeRotatedAABB(w, h, d, position, rotationDeg)
-
   if (isAxisAligned(rotationDeg)) {
+    const aabb = computeRotatedAABB(w, h, d, position, rotationDeg)
     return { voxels: [], usesFastPath: true, aabb }
   }
 
-  // Slow path: enumerate voxels in AABB, check if center is inside the original box
-  // Inverse of orthogonal rotation matrix = transpose
+  // Slow path: build rotation matrix once for both AABB and voxel enumeration
   const fwd = buildRotation3x3(rotationDeg)
+  const aabb = computeAABBFromMatrix(w, h, d, position, fwd, false)
+
+  // Inverse of orthogonal rotation matrix = transpose
   const invRot = [fwd[0]!, fwd[3]!, fwd[6]!, fwd[1]!, fwd[4]!, fwd[7]!, fwd[2]!, fwd[5]!, fwd[8]!]
   const voxels: Vec3[] = []
 
   for (let vz = aabb.min.z; vz < aabb.max.z; vz++) {
     for (let vy = aabb.min.y; vy < aabb.max.y; vy++) {
       for (let vx = aabb.min.x; vx < aabb.max.x; vx++) {
-        // Voxel center in world space (relative to position)
         const cx = vx + 0.5 - position.x
         const cy = vy + 0.5 - position.y
         const cz = vz + 0.5 - position.z
-
-        // Inverse-rotate to local box space
         const local = rotatePoint(invRot, cx, cy, cz)
-
-        // Check if inside [0, w] x [0, h] x [0, d]
         if (local.x >= 0 && local.x <= w &&
             local.y >= 0 && local.y <= h &&
             local.z >= 0 && local.z <= d) {
@@ -153,14 +156,21 @@ export function voxelizeComposite(
   }
 
   const rot = buildRotation3x3(rotationDeg)
-  const allVoxels: Vec3[] = []
-  const voxelSet = new Set<string>()
+  // Hoist inverse rotation outside the block loop (same for all blocks)
+  const invRot = [rot[0]!, rot[3]!, rot[6]!, rot[1]!, rot[4]!, rot[7]!, rot[2]!, rot[5]!, rot[8]!]
 
-  let minX = Infinity, minY = Infinity, minZ = Infinity
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+  // Pre-pass: compute all block AABBs and the global AABB
+  interface BlockBounds {
+    vMinX: number; vMinY: number; vMinZ: number
+    vMaxX: number; vMaxY: number; vMaxZ: number
+    block: ShapeBlock
+  }
+  const blockBounds: BlockBounds[] = []
+
+  let globalMinX = Infinity, globalMinY = Infinity, globalMinZ = Infinity
+  let globalMaxX = -Infinity, globalMaxY = -Infinity, globalMaxZ = -Infinity
 
   for (const block of blocks) {
-    // Block corners in local shape space
     const corners = [
       [block.x, block.y, block.z],
       [block.x + block.w, block.y, block.z],
@@ -172,7 +182,6 @@ export function voxelizeComposite(
       [block.x + block.w, block.y + block.h, block.z + block.d],
     ]
 
-    // Find block AABB in world space
     let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity
     let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity
 
@@ -185,38 +194,76 @@ export function voxelizeComposite(
       if (px > bMaxX) bMaxX = px; if (py > bMaxY) bMaxY = py; if (pz > bMaxZ) bMaxZ = pz
     }
 
-    const snap = (v: number) => Math.abs(v - Math.round(v)) < 0.001 ? Math.round(v) : v
     const vMinX = Math.floor(snap(bMinX)), vMinY = Math.floor(snap(bMinY)), vMinZ = Math.floor(snap(bMinZ))
     const vMaxX = Math.ceil(snap(bMaxX)), vMaxY = Math.ceil(snap(bMaxY)), vMaxZ = Math.ceil(snap(bMaxZ))
 
-    // Update global AABB
-    if (vMinX < minX) minX = vMinX; if (vMinY < minY) minY = vMinY; if (vMinZ < minZ) minZ = vMinZ
-    if (vMaxX > maxX) maxX = vMaxX; if (vMaxY > maxY) maxY = vMaxY; if (vMaxZ > maxZ) maxZ = vMaxZ
+    if (vMinX < globalMinX) globalMinX = vMinX; if (vMinY < globalMinY) globalMinY = vMinY; if (vMinZ < globalMinZ) globalMinZ = vMinZ
+    if (vMaxX > globalMaxX) globalMaxX = vMaxX; if (vMaxY > globalMaxY) globalMaxY = vMaxY; if (vMaxZ > globalMaxZ) globalMaxZ = vMaxZ
 
-    // Inverse of orthogonal rotation matrix = transpose
-    const invRot = [rot[0]!, rot[3]!, rot[6]!, rot[1]!, rot[4]!, rot[7]!, rot[2]!, rot[5]!, rot[8]!]
+    blockBounds.push({ vMinX, vMinY, vMinZ, vMaxX, vMaxY, vMaxZ, block })
+  }
 
-    // Enumerate voxels in block AABB
-    for (let vz = vMinZ; vz < vMaxZ; vz++) {
-      for (let vy = vMinY; vy < vMaxY; vy++) {
-        for (let vx = vMinX; vx < vMaxX; vx++) {
-          const key = `${vx},${vy},${vz}`
-          if (voxelSet.has(key)) continue
+  // Check if any block AABBs overlap (if not, skip deduplication set entirely)
+  let hasOverlap = false
+  if (blockBounds.length > 1) {
+    for (let i = 0; i < blockBounds.length && !hasOverlap; i++) {
+      for (let j = i + 1; j < blockBounds.length && !hasOverlap; j++) {
+        const a = blockBounds[i]!
+        const b = blockBounds[j]!
+        if (a.vMinX < b.vMaxX && a.vMaxX > b.vMinX &&
+            a.vMinY < b.vMaxY && a.vMaxY > b.vMinY &&
+            a.vMinZ < b.vMaxZ && a.vMaxZ > b.vMinZ) {
+          hasOverlap = true
+        }
+      }
+    }
+  }
 
-          // Voxel center in world space, relative to position
-          const cx = vx + 0.5 - position.x
-          const cy = vy + 0.5 - position.y
-          const cz = vz + 0.5 - position.z
+  const allVoxels: Vec3[] = []
 
-          // Inverse-rotate to local shape space
-          const local = rotatePoint(invRot, cx, cy, cz)
+  if (hasOverlap) {
+    // Use numeric hash for deduplication (avoids string allocation + GC pressure)
+    const rangeX = globalMaxX - globalMinX
+    const rangeY = globalMaxY - globalMinY
+    const voxelSet = new Set<number>()
 
-          // Check if inside this block [block.x, block.x+block.w] × etc
-          if (local.x >= block.x && local.x <= block.x + block.w &&
-              local.y >= block.y && local.y <= block.y + block.h &&
-              local.z >= block.z && local.z <= block.z + block.d) {
-            voxelSet.add(key)
-            allVoxels.push({ x: vx, y: vy, z: vz })
+    for (const bb of blockBounds) {
+      const block = bb.block
+      for (let vz = bb.vMinZ; vz < bb.vMaxZ; vz++) {
+        for (let vy = bb.vMinY; vy < bb.vMaxY; vy++) {
+          for (let vx = bb.vMinX; vx < bb.vMaxX; vx++) {
+            const key = (vx - globalMinX) + rangeX * ((vy - globalMinY) + rangeY * (vz - globalMinZ))
+            if (voxelSet.has(key)) continue
+            const cx = vx + 0.5 - position.x
+            const cy = vy + 0.5 - position.y
+            const cz = vz + 0.5 - position.z
+            const local = rotatePoint(invRot, cx, cy, cz)
+            if (local.x >= block.x && local.x <= block.x + block.w &&
+                local.y >= block.y && local.y <= block.y + block.h &&
+                local.z >= block.z && local.z <= block.z + block.d) {
+              voxelSet.add(key)
+              allVoxels.push({ x: vx, y: vy, z: vz })
+            }
+          }
+        }
+      }
+    }
+  } else {
+    // No overlap between blocks: concatenate without deduplication
+    for (const bb of blockBounds) {
+      const block = bb.block
+      for (let vz = bb.vMinZ; vz < bb.vMaxZ; vz++) {
+        for (let vy = bb.vMinY; vy < bb.vMaxY; vy++) {
+          for (let vx = bb.vMinX; vx < bb.vMaxX; vx++) {
+            const cx = vx + 0.5 - position.x
+            const cy = vy + 0.5 - position.y
+            const cz = vz + 0.5 - position.z
+            const local = rotatePoint(invRot, cx, cy, cz)
+            if (local.x >= block.x && local.x <= block.x + block.w &&
+                local.y >= block.y && local.y <= block.y + block.h &&
+                local.z >= block.z && local.z <= block.z + block.d) {
+              allVoxels.push({ x: vx, y: vy, z: vz })
+            }
           }
         }
       }
@@ -227,8 +274,8 @@ export function voxelizeComposite(
     voxels: allVoxels,
     usesFastPath: false,
     aabb: {
-      min: { x: minX, y: minY, z: minZ },
-      max: { x: maxX, y: maxY, z: maxZ },
+      min: { x: globalMinX, y: globalMinY, z: globalMinZ },
+      max: { x: globalMaxX, y: globalMaxY, z: globalMaxZ },
     },
   }
 }

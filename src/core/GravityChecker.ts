@@ -1,4 +1,4 @@
-import type { CargoItemDef, PlacedCargo } from './types'
+import type { CargoItemDef, PlacedCargo, Vec3 } from './types'
 import type { VoxelGrid } from './VoxelGrid'
 import { computeRotatedAABB } from './Voxelizer'
 
@@ -97,5 +97,19 @@ export function checkAllSupports(
     results.set(p.instanceId, checkSupport(grid, p.instanceId, aabb))
   }
 
+  return results
+}
+
+export function checkAllSupportsWithAABBs(
+  grid: VoxelGrid,
+  placements: PlacedCargo[],
+  aabbs: Array<{ min: Vec3; max: Vec3 }>,
+): Map<number, SupportResult> {
+  const results = new Map<number, SupportResult>()
+  for (let i = 0; i < placements.length; i++) {
+    const p = placements[i]!
+    const aabb = aabbs[i]!
+    results.set(p.instanceId, checkSupport(grid, p.instanceId, aabb))
+  }
   return results
 }

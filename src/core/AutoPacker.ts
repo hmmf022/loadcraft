@@ -170,7 +170,7 @@ function tryPlaceItem(
   instanceId: number,
   occMap: OccupancyMap,
   container: ContainerDef,
-  placedAabbs: Array<{ min: Vec3; max: Vec3 }>,
+  placedAabbs: SpatialHash,
   stackCtx: StackContext | null,
   weights: ScoreWeights,
   groupCentroids: Map<string, GroupCentroid> | undefined,
@@ -214,6 +214,7 @@ function tryPlaceItem(
         : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, c.rot)
 
       // Correct slight out-of-bounds shifts caused by rotated AABB offsets.
+      // Offset existing results instead of re-voxelizing (corrections are always integers).
       const { min, max } = result.aabb
       let dx = 0, dy = 0, dz = 0
       if (min.x < 0) dx = -min.x
@@ -224,16 +225,21 @@ function tryPlaceItem(
       if (max.z > container.depthCm) dz = container.depthCm - max.z
       if (dx !== 0 || dy !== 0 || dz !== 0) {
         pos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
-        result = def.blocks
-          ? voxelizeComposite(def.blocks, pos, c.rot)
-          : voxelize(def.widthCm, def.heightCm, def.depthCm, pos, c.rot)
+        result = {
+          voxels: result.voxels.map(v => ({ x: v.x + dx, y: v.y + dy, z: v.z + dz })),
+          usesFastPath: result.usesFastPath,
+          aabb: {
+            min: { x: min.x + dx, y: min.y + dy, z: min.z + dz },
+            max: { x: max.x + dx, y: max.y + dy, z: max.z + dz },
+          },
+        }
       }
 
       if (!isInsideContainer(result.aabb, container)) {
         hadOutOfBounds = true
         continue
       }
-      if (isColliding(result.aabb, placedAabbs)) {
+      if (placedAabbs.isColliding(result.aabb)) {
         hadCollision = true
         continue
       }
@@ -257,10 +263,12 @@ function tryPlaceItem(
         rotationDeg: c.rot,
       }
 
+      const candCenter = centerFromAABB(result.aabb)
       const score = scorePlacement(
         placement, def, container,
         runningCog.totalWeight, runningCog.cogX, runningCog.cogY, runningCog.cogZ,
         supportRatio, weights, groupCentroids?.get(def.id),
+        result.aabb, candCenter,
       )
       scoredCandidates.push({ placement, result, score })
     }
@@ -283,9 +291,9 @@ function tryPlaceItem(
 
     // Success — mutate shared state
     occMap.markAABB(cand.result.aabb)
-    placedAabbs.push(cand.result.aabb)
+    placedAabbs.add(cand.result.aabb)
     if (stackCtx) addToStackContext(stackCtx, cand.placement, def)
-    const center = getPlacementCenter(cand.placement, def)
+    const center = centerFromAABB(cand.result.aabb)
     runningCog.totalWeight += def.weightKg
     runningCog.cogX += center.x * def.weightKg
     runningCog.cogY += center.y * def.weightKg
@@ -342,16 +350,15 @@ function sortForStrategy(items: CargoItemDef[], strategy: PackStrategy, containe
 
 function updateGroupCentroids(
   centroids: Map<string, GroupCentroid>,
-  placement: PlacedCargo,
-  def: CargoItemDef,
+  defId: string,
+  center: Vec3,
 ): void {
-  const center = getPlacementCenter(placement, def)
-  const gc = centroids.get(def.id) ?? { sumX: 0, sumY: 0, sumZ: 0, count: 0 }
+  const gc = centroids.get(defId) ?? { sumX: 0, sumY: 0, sumZ: 0, count: 0 }
   gc.sumX += center.x
   gc.sumY += center.y
   gc.sumZ += center.z
   gc.count++
-  centroids.set(def.id, gc)
+  centroids.set(defId, gc)
 }
 
 // ─── Single-pass packing (default, lff, layer/wall fallback) ───
@@ -377,7 +384,7 @@ function autoPackSinglePass(
     : new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
   let nextId = startInstanceId
   const allDefs = dedupeDefs([...existingDefs, ...items])
-  const placedAabbs = buildAabbList(existingPlacements, allDefs)
+  const placedAabbs = buildAabbHash(existingPlacements, allDefs)
 
   const hasAnyStackConstraints = allDefs.some(
     d => d.noStack === true || d.maxStackWeightKg !== undefined
@@ -403,7 +410,7 @@ function autoPackSinglePass(
   if (groupCentroids) {
     for (const p of existingPlacements) {
       const def = allDefs.find(d => d.id === p.cargoDefId)
-      if (def) updateGroupCentroids(groupCentroids, p, def)
+      if (def) updateGroupCentroids(groupCentroids, def.id, getPlacementCenter(p, def))
     }
   }
 
@@ -430,7 +437,7 @@ function autoPackSinglePass(
     if (tryResult.placed) {
       placements.push(tryResult.placement)
       voxelizeResults.push(tryResult.result)
-      if (groupCentroids) updateGroupCentroids(groupCentroids, tryResult.placement, def)
+      if (groupCentroids) updateGroupCentroids(groupCentroids, def.id, centerFromAABB(tryResult.result.aabb))
       nextId++
     } else {
       failedDefIds.push(def.id)
@@ -514,7 +521,7 @@ function autoPackLayered(
   const occMap = new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
   let nextId = startInstanceId
   const allDefs = dedupeDefs(items)
-  const placedAabbs: Array<{ min: Vec3; max: Vec3 }> = []
+  const placedAabbs = new SpatialHash()
 
   const hasAnyStackConstraints = allDefs.some(
     d => d.noStack === true || d.maxStackWeightKg !== undefined
@@ -626,7 +633,7 @@ function autoPackWalled(
   )
   const globalStackCtx = hasAnyStackConstraints ? buildStackContext([], allDefs) : null
   const globalRunningCog: RunningCog = { totalWeight: 0, cogX: 0, cogY: 0, cogZ: 0 }
-  const globalPlacedAabbs: Array<{ min: Vec3; max: Vec3 }> = []
+  const globalPlacedAabbs = new SpatialHash()
 
   let wallX = 0
   let nextId = startInstanceId
@@ -720,7 +727,7 @@ function autoPackWalled(
       maxPayloadKg: container.maxPayloadKg,
     }
     const wallOccMap = new OccupancyMap(wallDepth, container.heightCm, container.depthCm)
-    const wallPlacedAabbs: Array<{ min: Vec3; max: Vec3 }> = []
+    const wallPlacedAabbs = new SpatialHash()
     const wallStackCtx = hasAnyStackConstraints ? buildStackContext([], allDefs) : null
     const wallRunningCog: RunningCog = { totalWeight: 0, cogX: 0, cogY: 0, cogZ: 0 }
 
@@ -803,10 +810,10 @@ function autoPackWalled(
 
       placements.push(globalPlacement)
       voxelizeResults.push(globalResult)
-      globalPlacedAabbs.push(globalResult.aabb)
+      globalPlacedAabbs.add(globalResult.aabb)
       if (globalStackCtx) addToStackContext(globalStackCtx, globalPlacement, def)
 
-      const center = getPlacementCenter(globalPlacement, def)
+      const center = centerFromAABB(globalResult.aabb)
       globalRunningCog.totalWeight += def.weightKg
       globalRunningCog.cogX += center.x * def.weightKg
       globalRunningCog.cogY += center.y * def.weightKg
@@ -958,7 +965,7 @@ function autoPackExtremePoint(
     : new OccupancyMap(container.widthCm, container.heightCm, container.depthCm)
   let nextId = startInstanceId
   const allDefs = dedupeDefs([...existingDefs, ...items])
-  const placedAabbs = buildAabbList(existingPlacements, allDefs)
+  const placedAabbs = buildAabbHash(existingPlacements, allDefs)
 
   const hasAnyStackConstraints = allDefs.some(
     d => d.noStack === true || d.maxStackWeightKg !== undefined
@@ -990,7 +997,7 @@ function autoPackExtremePoint(
     const aabb = computeCargoAABB(def, p.positionCm, p.rotationDeg)
     epSet.generateFromPlacement(aabb)
   }
-  epSet.removeInsideAnyAABB(placedAabbs)
+  epSet.removeInsideAnyAABB(placedAabbs.getAll())
   epSet.removeDominated()
 
   // ── Main loop ──
@@ -1013,11 +1020,19 @@ function autoPackExtremePoint(
     let hadNoSupport = false
     let hadStackConstraint = false
 
+    // Early termination threshold: floor placement at back wall with good support
+    const GOOD_ENOUGH_SCORE = 0.3
+    // Limit total candidates to evaluate (more placed items → fewer candidates needed)
+    const maxCandidates = Math.max(32, 200 - placedAabbs.getAll().length)
+    let bestScore = Infinity
+
     for (const c of candidates) {
       if (c.effW > container.widthCm || c.effH > container.heightCm || c.effD > container.depthCm) continue
       hadOrientationFit = true
 
       for (const ep of epSet.getCandidates()) {
+        if (scoredList.length >= maxCandidates && bestScore <= GOOD_ENOUGH_SCORE) break
+
         // Determine Y coordinate
         const baseY = ep.fixedY !== null
           ? ep.fixedY
@@ -1034,7 +1049,7 @@ function autoPackExtremePoint(
 
         let aabb = computeCargoAABB(def, pos, c.rot)
 
-        // Bounds correction
+        // Bounds correction — offset AABB instead of recomputing
         let dx = 0, dy = 0, dz = 0
         if (aabb.min.x < 0) dx = -aabb.min.x
         if (aabb.min.y < 0) dy = -aabb.min.y
@@ -1044,11 +1059,14 @@ function autoPackExtremePoint(
         if (aabb.max.z > container.depthCm) dz = container.depthCm - aabb.max.z
         if (dx !== 0 || dy !== 0 || dz !== 0) {
           pos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
-          aabb = computeCargoAABB(def, pos, c.rot)
+          aabb = {
+            min: { x: aabb.min.x + dx, y: aabb.min.y + dy, z: aabb.min.z + dz },
+            max: { x: aabb.max.x + dx, y: aabb.max.y + dy, z: aabb.max.z + dz },
+          }
         }
 
         if (!isInsideContainer(aabb, container)) { hadOutOfBounds = true; continue }
-        if (isColliding(aabb, placedAabbs)) { hadCollision = true; continue }
+        if (placedAabbs.isColliding(aabb)) { hadCollision = true; continue }
 
         const supportRatio = occMap.getSupportRatio(
           aabb.min.x, aabb.min.z,
@@ -1061,13 +1079,17 @@ function autoPackExtremePoint(
           instanceId: nextId, cargoDefId: def.id,
           positionCm: pos, rotationDeg: c.rot,
         }
+        const epCenter = centerFromAABB(aabb)
         const score = scorePlacement(
           placement, def, container,
           runningCog.totalWeight, runningCog.cogX, runningCog.cogY, runningCog.cogZ,
           supportRatio, EP_WEIGHTS, undefined,
+          aabb, epCenter,
         )
         scoredList.push({ placement, aabb, score })
+        if (score < bestScore) bestScore = score
       }
+      if (scoredList.length >= maxCandidates && bestScore <= GOOD_ENOUGH_SCORE) break
     }
 
     // Fallback: if EP candidates found no valid position, try OccupancyMap search
@@ -1092,10 +1114,13 @@ function autoPackExtremePoint(
           if (aabb.max.z > container.depthCm) dz = container.depthCm - aabb.max.z
           if (dx !== 0 || dy !== 0 || dz !== 0) {
             pos = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz }
-            aabb = computeCargoAABB(def, pos, c.rot)
+            aabb = {
+              min: { x: aabb.min.x + dx, y: aabb.min.y + dy, z: aabb.min.z + dz },
+              max: { x: aabb.max.x + dx, y: aabb.max.y + dy, z: aabb.max.z + dz },
+            }
           }
           if (!isInsideContainer(aabb, container)) { hadOutOfBounds = true; continue }
-          if (isColliding(aabb, placedAabbs)) { hadCollision = true; continue }
+          if (placedAabbs.isColliding(aabb)) { hadCollision = true; continue }
           const supportRatio = occMap.getSupportRatio(
             aabb.min.x, aabb.min.z,
             aabb.max.x - aabb.min.x, aabb.max.z - aabb.min.z,
@@ -1106,10 +1131,12 @@ function autoPackExtremePoint(
             instanceId: nextId, cargoDefId: def.id,
             positionCm: pos, rotationDeg: c.rot,
           }
+          const fbCenter = centerFromAABB(aabb)
           const score = scorePlacement(
             placement, def, container,
             runningCog.totalWeight, runningCog.cogX, runningCog.cogY, runningCog.cogZ,
             supportRatio, EP_WEIGHTS, undefined,
+            aabb, fbCenter,
           )
           scoredList.push({ placement, aabb, score })
         }
@@ -1133,9 +1160,9 @@ function autoPackExtremePoint(
 
       // Success — update state
       occMap.markAABB(cand.aabb)
-      placedAabbs.push(cand.aabb)
+      placedAabbs.add(cand.aabb)
       if (stackCtx) addToStackContext(stackCtx, cand.placement, def)
-      const center = getPlacementCenter(cand.placement, def)
+      const center = centerFromAABB(cand.aabb)
       runningCog.totalWeight += def.weightKg
       runningCog.cogX += center.x * def.weightKg
       runningCog.cogY += center.y * def.weightKg
@@ -1143,7 +1170,7 @@ function autoPackExtremePoint(
 
       // EP update
       epSet.generateFromPlacement(cand.aabb)
-      epSet.removeInsideAnyAABB(placedAabbs)
+      epSet.removeInsideAnyAABB(placedAabbs.getAll())
       epSet.removeDominated()
 
       // Generate VoxelizeResult
@@ -1229,9 +1256,10 @@ function scorePlacement(
   runningCogZ: number,
   supportRatio: number,
   weights: ScoreWeights,
-  groupCentroid?: GroupCentroid,
+  groupCentroid: GroupCentroid | undefined,
+  aabb: { min: Vec3; max: Vec3 },
+  center: Vec3,
 ): number {
-  const center = getPlacementCenter(placement, def)
   const totalWeight = runningTotalWeight + def.weightKg
   const cogX = (runningCogX + center.x * def.weightKg) / totalWeight
   const cogY = (runningCogY + center.y * def.weightKg) / totalWeight
@@ -1244,7 +1272,6 @@ function scorePlacement(
   const devZ = Math.abs(cogZ - targetZ) / Math.max(1, container.depthCm)
   const cogPenalty = devX + devY * 0.25 + devZ
 
-  const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, placement.positionCm, placement.rotationDeg)
   const floorPenalty = aabb.min.y / Math.max(1, container.heightCm)
   const backWallPenalty = placement.positionCm.x / Math.max(1, container.widthCm)
   const sidePenalty = placement.positionCm.z / Math.max(1, container.depthCm)
@@ -1362,19 +1389,19 @@ function dedupeDefs(defs: CargoItemDef[]): CargoItemDef[] {
   return [...map.values()]
 }
 
-function buildAabbList(placements: PlacedCargo[], defs: CargoItemDef[]): Array<{ min: Vec3; max: Vec3 }> {
+function buildAabbHash(placements: PlacedCargo[], defs: CargoItemDef[]): SpatialHash {
   const defMap = new Map<string, CargoItemDef>()
   for (const def of defs) {
     defMap.set(def.id, def)
   }
-  const list: Array<{ min: Vec3; max: Vec3 }> = []
+  const hash = new SpatialHash()
   for (const p of placements) {
     const def = defMap.get(p.cargoDefId)
     if (!def) continue
     const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
-    list.push(aabb)
+    hash.add(aabb)
   }
-  return list
+  return hash
 }
 
 function isInsideContainer(aabb: { min: Vec3; max: Vec3 }, container: ContainerDef): boolean {
@@ -1384,24 +1411,92 @@ function isInsideContainer(aabb: { min: Vec3; max: Vec3 }, container: ContainerD
   )
 }
 
-function isColliding(aabb: { min: Vec3; max: Vec3 }, existing: Array<{ min: Vec3; max: Vec3 }>): boolean {
-  for (const e of existing) {
-    if (
-      aabb.min.x < e.max.x && aabb.max.x > e.min.x &&
-      aabb.min.y < e.max.y && aabb.max.y > e.min.y &&
-      aabb.min.z < e.max.z && aabb.max.z > e.min.z
-    ) {
-      return true
+// ─── Spatial hash for fast AABB collision queries ────────────────
+
+const CELL_SIZE = 50
+
+class SpatialHash {
+  private cells: Map<number, Array<{ min: Vec3; max: Vec3 }>>
+  private allAABBs: Array<{ min: Vec3; max: Vec3 }>
+
+  constructor() {
+    this.cells = new Map()
+    this.allAABBs = []
+  }
+
+  private hashKey(cx: number, cy: number, cz: number): number {
+    // Use a large-prime spatial hash to minimize collisions
+    return (cx * 73856093) ^ (cy * 19349663) ^ (cz * 83492791)
+  }
+
+  add(aabb: { min: Vec3; max: Vec3 }): void {
+    this.allAABBs.push(aabb)
+    const minCX = Math.floor(aabb.min.x / CELL_SIZE)
+    const minCY = Math.floor(aabb.min.y / CELL_SIZE)
+    const minCZ = Math.floor(aabb.min.z / CELL_SIZE)
+    const maxCX = Math.floor(aabb.max.x / CELL_SIZE)
+    const maxCY = Math.floor(aabb.max.y / CELL_SIZE)
+    const maxCZ = Math.floor(aabb.max.z / CELL_SIZE)
+    for (let cz = minCZ; cz <= maxCZ; cz++) {
+      for (let cy = minCY; cy <= maxCY; cy++) {
+        for (let cx = minCX; cx <= maxCX; cx++) {
+          const key = this.hashKey(cx, cy, cz)
+          let cell = this.cells.get(key)
+          if (!cell) {
+            cell = []
+            this.cells.set(key, cell)
+          }
+          cell.push(aabb)
+        }
+      }
     }
   }
-  return false
+
+  isColliding(aabb: { min: Vec3; max: Vec3 }): boolean {
+    const minCX = Math.floor(aabb.min.x / CELL_SIZE)
+    const minCY = Math.floor(aabb.min.y / CELL_SIZE)
+    const minCZ = Math.floor(aabb.min.z / CELL_SIZE)
+    const maxCX = Math.floor(aabb.max.x / CELL_SIZE)
+    const maxCY = Math.floor(aabb.max.y / CELL_SIZE)
+    const maxCZ = Math.floor(aabb.max.z / CELL_SIZE)
+
+    const checked = new Set<{ min: Vec3; max: Vec3 }>()
+    for (let cz = minCZ; cz <= maxCZ; cz++) {
+      for (let cy = minCY; cy <= maxCY; cy++) {
+        for (let cx = minCX; cx <= maxCX; cx++) {
+          const cell = this.cells.get(this.hashKey(cx, cy, cz))
+          if (!cell) continue
+          for (const e of cell) {
+            if (checked.has(e)) continue
+            checked.add(e)
+            if (aabb.min.x < e.max.x && aabb.max.x > e.min.x &&
+                aabb.min.y < e.max.y && aabb.max.y > e.min.y &&
+                aabb.min.z < e.max.z && aabb.max.z > e.min.z) {
+              return true
+            }
+          }
+        }
+      }
+    }
+    return false
+  }
+
+  /** Get all AABBs (for EP removeInsideAnyAABB) */
+  getAll(): Array<{ min: Vec3; max: Vec3 }> {
+    return this.allAABBs
+  }
 }
 
-function getPlacementCenter(p: PlacedCargo, def: CargoItemDef): Vec3 {
-  const aabb = computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
+
+function centerFromAABB(aabb: { min: Vec3; max: Vec3 }): Vec3 {
   return {
     x: (aabb.min.x + aabb.max.x) / 2,
     y: (aabb.min.y + aabb.max.y) / 2,
     z: (aabb.min.z + aabb.max.z) / 2,
   }
+}
+
+function getPlacementCenter(p: PlacedCargo, def: CargoItemDef, precomputedAABB?: { min: Vec3; max: Vec3 }): Vec3 {
+  const aabb = precomputedAABB ?? computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg)
+  return centerFromAABB(aabb)
 }

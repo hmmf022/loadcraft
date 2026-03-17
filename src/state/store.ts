@@ -3,11 +3,11 @@ import type { ContainerDef, CargoItemDef, PlacedCargo, Vec3, DragState, CameraVi
 import type { PackFailureReason } from '../core/AutoPacker'
 import { CONTAINER_PRESETS } from '../core/types'
 import { createVoxelGrid, getVoxelGrid } from '../core/voxelGridSingleton'
-import { computeWeight, computeCogDeviation } from '../core/WeightCalculator'
+import { computeWeightWithAABBs, computeCogDeviation } from '../core/WeightCalculator'
 import type { CogDeviation } from '../core/WeightCalculator'
-import { checkAllSupports } from '../core/GravityChecker'
+import { checkAllSupportsWithAABBs } from '../core/GravityChecker'
 import type { SupportResult } from '../core/GravityChecker'
-import { checkStackConstraints } from '../core/StackChecker'
+import { checkStackConstraintsWithAABBs } from '../core/StackChecker'
 import type { StackViolation } from '../core/StackChecker'
 import type { InterferencePair } from '../core/InterferenceChecker'
 import { downloadJson } from '../ui/downloadJson'
@@ -138,13 +138,27 @@ function recomputeAnalyticsSync(
   cargoDefs: CargoItemDef[],
   container: ContainerDef,
 ): { weightResult: WeightResult; cogDeviation: CogDeviation | null; supportResults: Map<number, SupportResult>; stackViolations: StackViolation[] } {
-  const weightResult = computeWeight(placements, cargoDefs, container)
+  const defMap = new Map<string, CargoItemDef>()
+  for (const d of cargoDefs) defMap.set(d.id, d)
+
+  // Compute AABBs once for all placements
+  const aabbs: Array<{ min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }> = []
+  for (const p of placements) {
+    const def = defMap.get(p.cargoDefId)
+    if (!def) {
+      aabbs.push({ min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } })
+      continue
+    }
+    aabbs.push(computeRotatedAABB(def.widthCm, def.heightCm, def.depthCm, p.positionCm, p.rotationDeg))
+  }
+
+  const weightResult = computeWeightWithAABBs(placements, cargoDefs, container, aabbs)
   const cogDeviation = placements.length > 0
     ? computeCogDeviation(weightResult.centerOfGravity, container)
     : null
   const grid = getVoxelGrid()
-  const supportResults = checkAllSupports(grid, placements, cargoDefs)
-  const stackViolations = checkStackConstraints(placements, cargoDefs)
+  const supportResults = checkAllSupportsWithAABBs(grid, placements, aabbs)
+  const stackViolations = checkStackConstraintsWithAABBs(placements, cargoDefs, aabbs)
   return { weightResult, cogDeviation, supportResults, stackViolations }
 }
 
@@ -157,7 +171,7 @@ function scheduleAnalytics(): void {
     const state = useAppStore.getState()
     const analytics = recomputeAnalyticsSync(state.placements, state.cargoDefs, state.container)
     useAppStore.setState(analytics)
-  }, 0)
+  }, 50)
 }
 
 // --- Sync helper ---

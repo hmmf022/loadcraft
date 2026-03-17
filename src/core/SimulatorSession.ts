@@ -422,11 +422,13 @@ export class SimulatorSession {
         }
       }
 
-      const removedEntries: { placement: PlacedCargo; result: VoxelizeResult }[] = []
+      const defMap = new Map<string, CargoItemDef>()
+      for (const d of this.cargoDefs) defMap.set(d.id, d)
+      const removedEntries: { placement: PlacedCargo; def: CargoItemDef }[] = []
       for (const p of this.placements) {
-        const def = this.cargoDefs.find((d) => d.id === p.cargoDefId)
+        const def = defMap.get(p.cargoDefId)
         if (!def) continue
-        removedEntries.push({ placement: p, result: voxelizeCargo(def, p.positionCm, p.rotationDeg) })
+        removedEntries.push({ placement: p, def })
       }
 
       const result = autoPack(allItems, this.container, this.nextInstanceId, undefined, undefined, deadlineMs, strategy)
@@ -446,7 +448,7 @@ export class SimulatorSession {
         addedEntries.push({ placement: result.placements[i]!, result: result.voxelizeResults[i]! })
       }
 
-      const repackCmd = new RepackCommand(removedEntries, addedEntries)
+      const repackCmd = new RepackCommand(removedEntries, addedEntries, voxelizeCargo)
       this.history.executeCommand(repackCmd, this.grid)
 
       this.placements = result.placements

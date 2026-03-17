@@ -5,6 +5,8 @@ export class VoxelGrid {
   readonly height: number
   readonly depth: number
   private data: Uint16Array
+  occupiedCount: number = 0
+  private objectCells: Map<number, Set<number>> = new Map()
 
   constructor(width: number, height: number, depth: number) {
     this.width = width
@@ -28,7 +30,31 @@ export class VoxelGrid {
 
   set(x: number, y: number, z: number, id: number): void {
     if (!this.isInBounds(x, y, z)) return
-    this.data[this.index(x, y, z)] = id
+    const idx = this.index(x, y, z)
+    const old = this.data[idx]!
+    if (old === id) return
+    this.data[idx] = id
+
+    // Update occupiedCount
+    if (old === 0 && id !== 0) this.occupiedCount++
+    else if (old !== 0 && id === 0) this.occupiedCount--
+
+    // Update objectCells reverse lookup
+    if (old !== 0) {
+      const set = this.objectCells.get(old)
+      if (set) {
+        set.delete(idx)
+        if (set.size === 0) this.objectCells.delete(old)
+      }
+    }
+    if (id !== 0) {
+      let set = this.objectCells.get(id)
+      if (!set) {
+        set = new Set()
+        this.objectCells.set(id, set)
+      }
+      set.add(idx)
+    }
   }
 
   fillBox(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, id: number): void {
@@ -40,10 +66,42 @@ export class VoxelGrid {
     const cy1 = Math.min(this.height - 1, y1)
     const cz1 = Math.min(this.depth - 1, z1)
 
+    // Pre-fetch or create the target set for bulk insert
+    let targetSet: Set<number> | undefined
+    if (id !== 0) {
+      targetSet = this.objectCells.get(id)
+      if (!targetSet) {
+        targetSet = new Set()
+        this.objectCells.set(id, targetSet)
+      }
+    }
+
     for (let z = cz0; z <= cz1; z++) {
       for (let y = cy0; y <= cy1; y++) {
         const start = this.index(cx0, y, z)
         const end = this.index(cx1, y, z)
+
+        // Count occupancy changes and update reverse lookup before overwriting
+        for (let i = start; i <= end; i++) {
+          const old = this.data[i]!
+          if (old === id) continue
+          if (old === 0 && id !== 0) this.occupiedCount++
+          else if (old !== 0 && id === 0) this.occupiedCount--
+
+          // Remove from old object's set
+          if (old !== 0) {
+            const set = this.objectCells.get(old)
+            if (set) {
+              set.delete(i)
+              if (set.size === 0) this.objectCells.delete(old)
+            }
+          }
+          // Add to new object's set
+          if (targetSet) {
+            targetSet.add(i)
+          }
+        }
+
         this.data.fill(id, start, end + 1)
       }
     }
@@ -56,11 +114,13 @@ export class VoxelGrid {
   }
 
   clearObject(id: number): void {
-    for (let i = 0; i < this.data.length; i++) {
-      if (this.data[i] === id) {
-        this.data[i] = 0
-      }
+    const cells = this.objectCells.get(id)
+    if (!cells) return
+    this.occupiedCount -= cells.size
+    for (const idx of cells) {
+      this.data[idx] = 0
     }
+    this.objectCells.delete(id)
   }
 
   hasCollision(voxels: Vec3[], excludeId?: number): boolean {
@@ -73,25 +133,27 @@ export class VoxelGrid {
   }
 
   computeStats(): GridStats {
-    let occupied = 0
-    for (let i = 0; i < this.data.length; i++) {
-      if (this.data[i] !== 0) occupied++
-    }
     const total = this.data.length
     return {
       totalVoxels: total,
-      occupiedVoxels: occupied,
-      fillRate: total > 0 ? occupied / total : 0,
+      occupiedVoxels: this.occupiedCount,
+      fillRate: total > 0 ? this.occupiedCount / total : 0,
     }
   }
 
   clone(): VoxelGrid {
     const copy = new VoxelGrid(this.width, this.height, this.depth)
     copy.data.set(this.data)
+    copy.occupiedCount = this.occupiedCount
+    for (const [id, cells] of this.objectCells) {
+      copy.objectCells.set(id, new Set(cells))
+    }
     return copy
   }
 
   clear(): void {
     this.data.fill(0)
+    this.occupiedCount = 0
+    this.objectCells.clear()
   }
 }

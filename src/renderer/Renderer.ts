@@ -87,6 +87,7 @@ export class Renderer {
   private instanceBindGroup: GPUBindGroup | null = null
   private instanceBindGroupLayout!: GPUBindGroupLayout
   private instanceCount = 0
+  private instanceBufferCapacity = 0
 
   // Ghost pipeline
   private ghostPipeline!: GPURenderPipeline
@@ -94,6 +95,7 @@ export class Renderer {
   private ghostBindGroup: GPUBindGroup | null = null
   private ghostVisible = false
   private ghostInstanceCount = 1
+  private ghostBufferCapacity = 0
 
   // Container pipeline
   private containerPipeline!: GPURenderPipeline
@@ -259,6 +261,7 @@ export class Renderer {
       this.instanceBuffer?.destroy()
       this.instanceBuffer = null
       this.instanceBindGroup = null
+      this.instanceBufferCapacity = 0
       return
     }
 
@@ -307,20 +310,24 @@ export class Renderer {
       }
     }
 
-    // Recreate buffer if size changed
-    if (this.instanceBuffer) {
-      this.instanceBuffer.destroy()
-    }
-    this.instanceBuffer = this.device.createBuffer({
-      size: dataSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    })
-    this.device.queue.writeBuffer(this.instanceBuffer, 0, data)
+    // Reuse buffer if capacity is sufficient; otherwise grow by 2x
+    if (dataSize > this.instanceBufferCapacity) {
+      if (this.instanceBuffer) {
+        this.instanceBuffer.destroy()
+      }
+      const newCapacity = dataSize * 2
+      this.instanceBuffer = this.device.createBuffer({
+        size: newCapacity,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      })
+      this.instanceBufferCapacity = newCapacity
 
-    this.instanceBindGroup = this.device.createBindGroup({
-      layout: this.instanceBindGroupLayout,
-      entries: [{ binding: 0, resource: { buffer: this.instanceBuffer } }],
-    })
+      this.instanceBindGroup = this.device.createBindGroup({
+        layout: this.instanceBindGroupLayout,
+        entries: [{ binding: 0, resource: { buffer: this.instanceBuffer } }],
+      })
+    }
+    this.device.queue.writeBuffer(this.instanceBuffer!, 0, data)
   }
 
   updateGhost(position: Vec3 | null, widthCm: number, heightCm: number, depthCm: number, validity: 'valid' | 'invalid' | 'floating' | 'force', rotationDeg?: Vec3, blocks?: ShapeBlock[]): void {
@@ -361,12 +368,7 @@ export class Renderer {
         data[offset + 19] = ghostColor[3]
       }
 
-      if (this.ghostBuffer) this.ghostBuffer.destroy()
-      this.ghostBuffer = this.device.createBuffer({
-        size: data.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      })
-      this.device.queue.writeBuffer(this.ghostBuffer, 0, data)
+      this._updateGhostBuffer(data)
     } else {
       // Simple box ghost
       this.ghostInstanceCount = 1
@@ -375,18 +377,30 @@ export class Renderer {
       data.set(modelMatrix, 0)
       data[16] = ghostColor[0]; data[17] = ghostColor[1]; data[18] = ghostColor[2]; data[19] = ghostColor[3]
 
+      this._updateGhostBuffer(data)
+    }
+  }
+
+  /** Reuse ghost buffer if capacity is sufficient; otherwise grow by 2x (min 32 blocks). */
+  private _updateGhostBuffer(data: Float32Array): void {
+    const dataSize = data.byteLength
+    const MIN_GHOST_CAPACITY = 32 * INSTANCE_BYTE_SIZE
+
+    if (dataSize > this.ghostBufferCapacity) {
       if (this.ghostBuffer) this.ghostBuffer.destroy()
+      const newCapacity = Math.max(dataSize * 2, MIN_GHOST_CAPACITY)
       this.ghostBuffer = this.device.createBuffer({
-        size: data.byteLength,
+        size: newCapacity,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       })
-      this.device.queue.writeBuffer(this.ghostBuffer, 0, data)
-    }
+      this.ghostBufferCapacity = newCapacity
 
-    this.ghostBindGroup = this.device.createBindGroup({
-      layout: this.instanceBindGroupLayout,
-      entries: [{ binding: 0, resource: { buffer: this.ghostBuffer } }],
-    })
+      this.ghostBindGroup = this.device.createBindGroup({
+        layout: this.instanceBindGroupLayout,
+        entries: [{ binding: 0, resource: { buffer: this.ghostBuffer } }],
+      })
+    }
+    this.device.queue.writeBuffer(this.ghostBuffer!, 0, data as unknown as ArrayBuffer)
   }
 
   updateContainer(w: number, h: number, d: number): void {

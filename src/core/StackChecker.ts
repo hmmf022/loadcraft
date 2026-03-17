@@ -20,6 +20,63 @@ interface PlacedAABB {
 const EPSILON = 1.5 // tolerance in cm for "touching"
 
 /**
+ * Binary search: find the leftmost index where sorted[index].minY >= target.
+ * sorted is an array of { origIdx, minY } sorted by minY ascending.
+ */
+function lowerBound(sorted: { origIdx: number; minY: number }[], target: number): number {
+  let lo = 0
+  let hi = sorted.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (sorted[mid]!.minY < target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/**
+ * Build the support graph using Y-sort + binary search.
+ * For each item a, find items b where b.min.y ≈ a.max.y (b sits on a),
+ * then check XZ overlap only for those candidates.
+ */
+function buildSupportGraph(
+  aabbs: PlacedAABB[],
+): { onTopOf: number[][]; supportedBy: number[][] } {
+  const n = aabbs.length
+  const onTopOf: number[][] = Array.from({ length: n }, () => [])
+  const supportedBy: number[][] = Array.from({ length: n }, () => [])
+
+  // Sort indices by min.y for binary search
+  const sorted = aabbs.map((a, i) => ({ origIdx: i, minY: a.min.y }))
+  sorted.sort((a, b) => a.minY - b.minY)
+
+  // For each item a, find candidates b where b.min.y ∈ [a.max.y - EPSILON, a.max.y + EPSILON)
+  for (let i = 0; i < n; i++) {
+    const a = aabbs[i]!
+    const lo = lowerBound(sorted, a.max.y - EPSILON)
+
+    for (let k = lo; k < sorted.length; k++) {
+      const entry = sorted[k]!
+      if (entry.minY >= a.max.y + EPSILON) break
+      const j = entry.origIdx
+      if (j === i) continue
+
+      const b = aabbs[j]!
+      // Check XZ overlap
+      const overlapX = a.min.x < b.max.x && a.max.x > b.min.x
+      const overlapZ = a.min.z < b.max.z && a.max.z > b.min.z
+      if (!overlapX || !overlapZ) continue
+
+      // b sits on a (b.min.y ≈ a.max.y)
+      onTopOf[i]!.push(j)
+      supportedBy[j]!.push(i)
+    }
+  }
+
+  return { onTopOf, supportedBy }
+}
+
+/**
  * Check stack constraints for all placements.
  * Returns violations where weight on top exceeds maxStackWeightKg or noStack is violated.
  */
@@ -53,36 +110,8 @@ export function checkStackConstraints(
     })
   }
 
-  // Build support graph: for each item, find which items sit directly on top of it
-  // B is on top of A if: B.min.y ≈ A.max.y and XZ projections overlap
-
-  // supporters[i] = indices of items that support item i (items below it)
-  const supportedBy: number[][] = aabbs.map(() => [])
-  // onTopOf[i] = indices of items sitting on top of item i
-  const onTopOf: number[][] = aabbs.map(() => [])
-
-  for (let i = 0; i < aabbs.length; i++) {
-    for (let j = i + 1; j < aabbs.length; j++) {
-      const a = aabbs[i]!
-      const b = aabbs[j]!
-
-      // Check XZ overlap
-      const overlapX = a.min.x < b.max.x && a.max.x > b.min.x
-      const overlapZ = a.min.z < b.max.z && a.max.z > b.min.z
-      if (!overlapX || !overlapZ) continue
-
-      // Check if B sits on A (B.min.y ≈ A.max.y)
-      if (Math.abs(b.min.y - a.max.y) < EPSILON) {
-        onTopOf[i]!.push(j)
-        supportedBy[j]!.push(i)
-      }
-      // Check if A sits on B (A.min.y ≈ B.max.y)
-      if (Math.abs(a.min.y - b.max.y) < EPSILON) {
-        onTopOf[j]!.push(i)
-        supportedBy[i]!.push(j)
-      }
-    }
-  }
+  // Build support graph using Y-sort + binary search (O(n log n) instead of O(n²))
+  const { onTopOf } = buildSupportGraph(aabbs)
 
   // For each constrained item, compute total weight above it recursively (with memoization)
   const weightAboveCache = new Map<number, number>()
@@ -105,6 +134,84 @@ export function checkStackConstraints(
 
   for (let i = 0; i < aabbs.length; i++) {
     const item = aabbs[i]!
+    const def = defMap.get(item.defId)
+    if (!def) continue
+
+    const maxStack = def.noStack ? 0 : def.maxStackWeightKg
+    if (maxStack === undefined) continue
+
+    const actualWeight = getWeightAbove(i)
+    if (actualWeight > maxStack) {
+      violations.push({
+        instanceId: item.instanceId,
+        cargoDefId: def.id,
+        name: def.name,
+        maxStackWeightKg: maxStack,
+        actualStackWeightKg: actualWeight,
+      })
+    }
+  }
+
+  return violations
+}
+
+/**
+ * Check stack constraints using pre-computed AABBs.
+ * Same logic as checkStackConstraints but avoids recomputing AABBs.
+ */
+export function checkStackConstraintsWithAABBs(
+  placements: PlacedCargo[],
+  cargoDefs: CargoItemDef[],
+  aabbs: Array<{ min: Vec3; max: Vec3 }>,
+): StackViolation[] {
+  if (placements.length === 0) return []
+
+  const defMap = new Map<string, CargoItemDef>()
+  for (const d of cargoDefs) {
+    defMap.set(d.id, d)
+  }
+
+  // Build PlacedAABB array from pre-computed AABBs
+  const placedAABBs: PlacedAABB[] = []
+  for (let i = 0; i < placements.length; i++) {
+    const p = placements[i]!
+    const def = defMap.get(p.cargoDefId)
+    if (!def) continue
+
+    const aabb = aabbs[i]!
+    placedAABBs.push({
+      instanceId: p.instanceId,
+      defId: def.id,
+      min: aabb.min,
+      max: aabb.max,
+      weightKg: def.weightKg,
+    })
+  }
+
+  // Build support graph using Y-sort + binary search
+  const { onTopOf } = buildSupportGraph(placedAABBs)
+
+  // For each constrained item, compute total weight above it recursively (with memoization)
+  const weightAboveCache = new Map<number, number>()
+
+  function getWeightAbove(idx: number): number {
+    const cached = weightAboveCache.get(idx)
+    if (cached !== undefined) return cached
+
+    let total = 0
+    for (const aboveIdx of onTopOf[idx]!) {
+      const aboveItem = placedAABBs[aboveIdx]!
+      total += aboveItem.weightKg + getWeightAbove(aboveIdx)
+    }
+
+    weightAboveCache.set(idx, total)
+    return total
+  }
+
+  const violations: StackViolation[] = []
+
+  for (let i = 0; i < placedAABBs.length; i++) {
+    const item = placedAABBs[i]!
     const def = defMap.get(item.defId)
     if (!def) continue
 
@@ -152,26 +259,8 @@ export function buildStackContext(
     aabbs.push({ instanceId: p.instanceId, defId: def.id, min: aabb.min, max: aabb.max, weightKg: def.weightKg })
   }
 
-  const onTopOf: number[][] = aabbs.map(() => [])
-  const supportedBy: number[][] = aabbs.map(() => [])
-
-  for (let i = 0; i < aabbs.length; i++) {
-    for (let j = i + 1; j < aabbs.length; j++) {
-      const a = aabbs[i]!
-      const b = aabbs[j]!
-      const overlapX = a.min.x < b.max.x && a.max.x > b.min.x
-      const overlapZ = a.min.z < b.max.z && a.max.z > b.min.z
-      if (!overlapX || !overlapZ) continue
-      if (Math.abs(b.min.y - a.max.y) < EPSILON) {
-        onTopOf[i]!.push(j)
-        supportedBy[j]!.push(i)
-      }
-      if (Math.abs(a.min.y - b.max.y) < EPSILON) {
-        onTopOf[j]!.push(i)
-        supportedBy[i]!.push(j)
-      }
-    }
-  }
+  // Build support graph using Y-sort + binary search (O(n log n) instead of O(n²))
+  const { onTopOf, supportedBy } = buildSupportGraph(aabbs)
 
   return { aabbs, onTopOf, supportedBy, weightAboveCache: new Map(), defMap }
 }
